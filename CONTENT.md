@@ -1,13 +1,15 @@
 # Customizing AFK Simulator
 
-Everything you can change lives in plain data files in `content/`. You never need to touch `game.js`.
+Everything you can change lives in plain data files in `content/`. You never need to touch `js/` (the engine; see "Code layout" below and `ARCHITECTURE.md`).
 No build step: edit a file, refresh the page.
 
 | File | What it holds |
 | --- | --- |
 | `content/characters.js` | friends, AFK-channel residents, bots, and their "digs" (personal insults) |
 | `content/channels.js` | text and voice channels, which characters sit in them, channel modifiers |
-| `content/items.js` | shop items and their effects |
+| `content/items.js` | classic shop items and their effects (tiers, rarity, categories) |
+| `content/rogue.js` | **rogue mode**: boons, relics, curses, events, bosses, loadouts, ascensions, synergies |
+| `content/roster-traits.js` | optional: palette + traits for the "Your crew" names (built-in fallbacks exist) |
 | `content/paths.js` | the "where do you go AFK" choices, mic events, path chatter |
 | `content/dialog.js` | brb phrases, excuses, and the shared chat lines |
 | `content/themes.js` | the theme list (colors live in `themes.css`) |
@@ -30,7 +32,9 @@ Each file is a classic `<script>` that adds its data to `window.AFK_CONTENT`, fo
 - Add `?debug=1` to the URL to log how many of each thing loaded (and to expose test hooks on `window.__afk`).
   Under `?debug=1` the squad always starts each round in the first voice channel unless a test calls `setChannel`.
 
-Text tokens you can use in posted chat lines (not in button labels, resident status or item/path names, which are shown as plain text): `{me}` your handle, `{p}` the time you promised, `{t}` how long you have been away.
+Other scripts the game loads (not content): `rng.js` (seeded random streams), `effects.js` (the effects combiner), `roster.js` (your crew), then `game.js`.
+
+Text tokens you can use in posted chat lines (not in button labels, resident status or item/path names, which are shown as plain text): `{me}` your handle, `{p}` the time you promised, `{t}` how long you have been away, `{friend}` a random OTHER friend (never the speaker; `{friend:the others}` gives the fallback text when nobody else is around).
 All text is shown as plain text (never HTML).
 Substitution is a single pass: `{me}`, `{p}` and `{t}` are filled once, and any other `{slot}` still left in a posted line is stripped, so a raw token is never shown.
 Pack generators fill their own slots (`{place}`, `{ship}`, ...) first, then the same pass runs.
@@ -162,39 +166,203 @@ How it plays:
   it. The summary line and the bank toast show it. Quick replies also refund a little (max 6).
 - Saved scores gain an optional `f` (channel you said brb in most) and the Discord share text then ends the stats with
   ` · fav #channel`; older entries render as before.
-- Tunables live in the `CT` constant in `game.js`.
+- Tunables live in the `CT` constant in `js/chat.js`.
+
+### Chat pacing: the speaker queue (`CT.q`, `js/chat.js`)
+
+While you are AFK, friend and bot lines never stack: each waits its turn. One line at a time: a `name is typing…` chip
+(only when the line is for the channel you are looking at), the message, then a short gap. Pings from several channels
+queue instead of landing together.
+
+- What is queued: any `post()` by a non-player, non-system speaker during the `afk` phase. What is not: player lines,
+  system lines (`sys`), `opts.now`, the catch-up loop (`catchingUp`), the `?debug` fast sim (`FAST`), and every other
+  phase (chat, triage, excuse, kick, return chatter already use their own `later()` spacing).
+- Accounting: the ping record (`addPing`) is created when the line LANDS, so `minsAtSend`, `seen`, owed and
+  left-on-read all see what the player could actually have seen. Weights (`opts.weight`) are untouched. `opts.fight`
+  tags a ping as an org-fight ping at landing. A line still queued when the AFK session ends (return, drag, kick, reset,
+  mode switch) is dropped and never becomes a ping.
+- Cap: `CT.q.cap` queued lines. When full, the oldest filler (a line that does not mention you) is dropped; a ping is
+  never dropped, so a ping surge can exceed the cap. With `CT.q.rush` or more pings waiting the gap shrinks
+  (`CT.q.rushMult`) so a burst still clears.
+- Tuning (ms): typing beat = `typeBase + chars * typePerCh` clamped to `typeMin..typeMax` (700 + 22/char, 900..2200);
+  gap after a message = random `gapMin..gapMax` (1500..2600). About 3-4 s per line at the defaults. `CT.q.on = false`
+  turns it off. Tests: `cqState()`, `cqFlush()` (land everything now); `window.__afk.say(ch, text, {now: true})` bypasses it.
+
+## Voice channels, moves and rejoin (`js/voice.js`, `css/voice.css`)
+
+Classic-only (rogue picks the squad's channel from its seeded plan; Game Night GHOST keeps the old flow: avatar sits in the AFK
+channel while you are away, then returns by itself). The sidebar voice rows are real `<button>`s; on phones a `Voice channels`
+strip under the text-channel strip does the same job.
+
+- **Joining.** Click (or Tab + Enter) a voice channel in chat, between rounds (brb options on screen). Not while leaving, AFK or
+  judging. A hop takes a 0.9 s "connecting" beat, posts a system line, costs suspicion **+1, then +2.5, then +4** (per round) and a friend
+  who is in that channel answers with a line from the channel's flavor. Your pick sticks for the run (the squad no longer rolls a hop).
+  Each channel keeps its own `members` (who is in the room) and `mods` (`susMult`, `pointMult`): the sidebar shows them.
+- **Flavor** (optional, per voice channel id; bad entries are ignored): classic `AFK_CONTENT.voiceFlavor`, pack `AFK_PACKS[id].data.voiceFlavor`:
+  `{ 'channel-id': { hello: ['line with {me}'], brb: [{ t: 'brb loading the last crate', p: 15, m: 0.95 }] } }`.
+  `hello` (<= 140 chars) is what a friend says when you join. `brb` options (`t` <= 60, promise `p` 1-90, multiplier `m` 0.5-2) replace the
+  third brb option while you sit in that channel (picked by round and hop count). Excuses are not channel-specific.
+- **BoberNet voice rooms**: Hangar Bay VC (baseline), Quantum Lounge (chill, x0.9 / x0.9), Cargo Run VC (forgives silence, x0.75 sus / x0.85 pts),
+  Bunker Ops (x1.2 / x1.2), Strike Comms (PvP, tense: x1.35 sus / x1.4 pts). Classic: squad vc, study room (forgiving), raid night.
+- **Being moved.** When the AFK bot moves you (`afk-timeout`) or a friend drags you out, your avatar leaves your voice channel and shows next
+  to the resident in the AFK channel; the member list and the status line say "moved". **You do not auto-return**: after the excuse and the
+  bank a `Rejoin voice` step appears (the button, or click your old channel, or any other voice channel, in the sidebar). The reconnect beat
+  is `900 + 12 ms per game minute gone`, capped at 3.8 s. Rejoining costs `round(minutes gone / 90)` suspicion (max 3, "where were you"),
+  friends comment (`rejoin` / `rejoinLong` dialog lines, `rejoinLong` at 60+ min) and the **next round is marked**: friends watch closer
+  (suspicion gain x1.1 for that round). If that next round is a clean, on-time return (not moved, not dragged, not early) it pays a
+  redemption bonus of `+20 x round` pts ("back on track after the park"); the mark is consumed by the next bank either way.
+- **Bot suspicion bump.** The auto-move adds **+25% suspicion**, clamped to the kick line minus 1 (it never kicks by itself). The bar
+  shows it, the system line and the AFK status line say `🤖 AFK bot flagged you: +25% suspicion`, and the value carries over (suspicion is frozen while parked).
+  Tunables: `VC_TUNE` at the top of `js/voice.js`.
+
+## Channel topics, view-only channels and reactions (`js/reactions.js`)
+
+Three chat features that live in `js/reactions.js` (+ small hooks in `js/chat.js`). The new channel fields are **not**
+known to `loader.js`; `reactions.js` reads them from the raw content (`AFK_CONTENT.channels`, `AFK_PACKS[id].data.channels`)
+and validates them itself: a bad value logs a `[content] ...` warning (also pushed to `AFK_RESOLVED.warnings`) and is ignored,
+it never throws.
+
+### Topic pools (what friends say IN a channel)
+
+Extra text-channel fields:
+
+```js
+{ id: 'pvp-ops', type: 'text', ...,
+  topic: 'pvp-ops'   // optional pool key. Default: the channel id (if a pool with that key exists)
+}
+```
+
+The pool itself: `AFK_CONTENT.dialog.TOPICS` (classic, `content/dialog.js`) or `AFK_PACKS[id].dialog.topics` (a pack,
+`content/packs/<id>/dialog.js`): `{ 'pool-key': ['line', '@{me} ping line', ...] }`.
+
+- Lines that contain `{me}` or `@everyone` are the **ping lines** (used when the game wants a friend to ping you); the rest
+  is ambient chatter. Write both kinds in every pool (about a third pings). Only the `{me}` token is allowed; max 140 chars;
+  a pool needs 3+ valid lines. Classic pools: `memes`, `clips`, `announcements`. BoberNet pools: `pvp-ops`, `trade-routes`,
+  `ship-art`, `clips`, `org-announcements`. A channel without a pool (`general`) is unchanged.
+- **When it applies.** Whenever the game picks a channel for an *ambient* friend line (`weightedCh()`: chill chatter, AFK pings),
+  the line posted there is swapped for a line from that channel's pool (a ping stays a ping). Topic lines do not repeat within 16 picks.
+  Not swapped: your own messages, dig lines (a friend's personal insult keeps its text anywhere), follow-ups
+  ("did you see my message in #x"), system messages, and anything posted with an explicit text (`post(..)` without an ambient pick).
+- `routeCh(pref)` (packs): pack lines that belong to a channel (org-fight pings -> `pvp-ops`, trade chatter -> `trade-routes`)
+  always go there. Server-lore chatter (no pref) goes to a channel without a topic (`general`).
+- Quick replies (`replies`) are already per channel; classic `announcements` and BoberNet `org-announcements` use the acknowledge flow instead.
+
+### View-only channels
+
+```js
+{ id: 'announcements', type: 'text', ..., readOnly: true, posters: ['afk-bot'] }
+```
+
+- `readOnly: true` (text only): the player cannot post, brb or explain themselves there. The channel gets a lock icon in the
+  sidebar/strip and header, an italic "view only" aria-label, and the composer shows the locked state
+  "You do not have permission to send messages in this channel."
+- Saying brb with a view-only channel open: the three brb options are disabled (title "<channel> IS VIEW ONLY"); click another
+  channel. Excuses (not the "say nothing" one) are disabled the same way. Any `post()` by the player or by a non-poster into
+  a view-only channel is moved to the first writable text channel.
+- `posters` (readOnly only): character ids allowed to post there (bots or officers; default: every bot). Friends and bots from
+  `posters` are the only voices in the channel. Classic: `afk-bot`. BoberNet: `vexley`, `tallow`.
+- **@everyone pings.** In a view-only channel a line with `@everyone` counts as a mention: while you are AFK it creates an owed ping
+  (weight as any ping). On return, triage lists the channel as usual, but you cannot reply: you get **Acknowledge**
+  (clears every owed ping there, no message is posted, +2..5 suspicion relief like a reply) or you click the **Acknowledge**
+  button on the announcement itself, or you simply stay in the channel for 2.5 s of triage ("reading it").
+- Follow-up pings ("did you see my message in #x") are never sent to a view-only channel. Reactions work in view-only channels.
+
+### Reactions
+
+- Every message has a reaction button (shown on hover/focus; always dimmed-visible on touch) and, when it has reactions, chips
+  under the text: emoji + count; click a chip to add/remove your own. Keyboard: Tab to the message list, Up/Down move between
+  messages, **R** or **Enter** opens the picker (a `role=menu` of 6: 👍 😂 💀 🔥 👀 🧢), arrows/Home/End/1-6 move, Enter picks,
+  Esc closes and returns focus. Reactions are only possible in phases chat/intro/triage/excuse (not AFK, not after a kick).
+- **Friends react.** Your normal messages get 0-1 reactions (45%); your **brb** and **excuse** always get 1-3, 0.5-1.2 s apart.
+  Friends also react to each other (30%, view-only announcements 55%, mostly 👍/👀).
+- **Skepticism.** For a brb/excuse the friends' mood is `sk = clamp(1.2 * sus / kickAt + 0.18 * timesThisExcuseWasUsed, 0, 1)`. Each reactor
+  sends a sceptical emoji (🧢 💀 👀) with probability `0.9 * sk`, otherwise a friendly one (👍 😂 🔥). Cosmetic, no scoring effect.
+- **Your reaction to a friend's message** that *fits* its content lowers suspicion a little: **-0.8 suspicion per fitting
+  reaction (`REACT.fit`), at most -2.4 per round (`REACT.cap`, i.e. 3 fitting reactions)**, once per message (toggling off and on again pays
+  nothing), never below 0, and not for your own messages. Fit = matches the message category: funny (`lol/lmao/clip/meme/fail...`) fits 😂 💀;
+  nice (`nice/render/hull/gg/...`) fits 🔥 👍; calls to action / announcements (`@`, `rally`, `fight`, `acknowledge`, ...) fit 👍 👀; price
+  talk (`price/rumor/route...`) fits 🧢 👀; anything else fits 👍 👀. A fitting chip gets a green ring. Tuning lives in `REACT` and
+  `RCT_CATS` at the top of `js/reactions.js`.
+
+## Effects vocabulary (items, boons, relics, curses, loadouts, ascensions)
+
+There is ONE effects vocabulary. It lives in `loader.js` (`AFK_RESOLVED.effectDefs`) and is combined in one place (`effects.js`
++ `getMods()` in `js/core.js`). Every source that has an `effects` object speaks it. Unknown keys and out-of-range values are
+dropped with a console warning. Columns: **single** = the most one source may declare (the loader rejects beyond it),
+**clamp C / R** = the total after combining everything, for classic / rogue.
+
+| Key | Kind | single | clamp C | clamp R | Meaning |
+| --- | --- | --- | --- | --- | --- |
+| `susMult` | multiply | 0.5..2 | 0.55..2 | 0.4..2.5 | suspicion gain |
+| `susFlatPerRound` | add | -10..10 | -15..15 | -20..20 | suspicion added at the start of each round (negative heals) |
+| `pointMult` | multiply | 0.5..1.5 | 0.6..2 | 0.6..3 | points |
+| `pointFlatPerMin` | add | 0..4 | 0..10 | 0..14 | flat points per game minute (grows 20% per round) |
+| `comboKeep` | charges | 1..2 | 0..3 | 0..4 | a combo reset is cancelled once per charge |
+| `comboStartBonus` | add | 0..1 | 0..1 | 0..2 | combos restart at x(1+n) |
+| `secondWind` / `secondWindSus` | charges / min | 1..2 / 25..70 | 0..3 / 25..70 | 0..4 / 25..70 | a would-be kick is cancelled; suspicion drops to `secondWindSus` (default 50, the lowest declared wins) |
+| `excuseReroll` | charges | 1..2 | 0..4 | 0..6 | a bad or busted excuse rolls once more |
+| `excuseBonus` | add | -10..25 | 0..60 | 0..80 | extra suspicion removed by an excuse |
+| `pingShield` | charges | 1..3 | 0..6 | 0..10 | the hottest owed pings are forgiven on return |
+| `triageTime` | multiply | 0.6..1.5 | 0.7..2 | 0.6..2.2 | length of the ping triage timer |
+| `micEventChance` | multiply | 0.1..3 | 0.1..3 | 0.1..3 | hot-mic accidents |
+| `clipBonusMult` | multiply | 1..3 | 1..3 | 1..3 | bonus when chat clips a funny mic event |
+| `graceMins` | add | -3..6 | 0..12 | 0..14 | minutes after your promise before friends start counting |
+| `dragChanceMult` | multiply | 0.4..3 | 0.25..3 | 0.25..3 | how often friends drag you out (no-timeout rounds) |
+| `lieBonusMult` | multiply | 1..2.5 | 0.5..3 | 0.5..3.5 | the "lie bonus" for staying out far past your promise |
+| `tokenMult` | multiply | 1..1.5 | 1..2 | 1..2 | tokens (classic) / rogue tokens (rogue) |
+| `goldMult` | multiply | 1..2 | 1..2 | 1..2.5 | rogue run gold (ignored in classic) |
+| `startSus` | add | 0..30 | 0..40 | 0..40 | suspicion at the start of a run |
+| `susCap` | add | 0..20 | 0..30 | 0..40 | the kick line becomes 100 + n |
+| `abFakeInternet` `abMuteHammer` `abDecoy` `abPingBomb` | charges | 1..2 | 0..3 | 0..4 | active abilities (buttons or Q W E R in safe moments) |
+
+Rules: multipliers compose multiplicatively (`value^n` per stack), adds sum, then ONE clamp per key at the end (never per source).
+`charges` keys are not combined into the modifiers: they are granted as counters (`S.charges`) when the source becomes active
+(classic: at run start or when armed; rogue: on pickup) and spent charges are never refunded. Environmental multipliers (channel mods,
+path mods, boss rules, elite rounds, act pressure, abilities used this round) are applied AFTER the clamp. `AFK_FX.fmt(key, value)` is the
+chip text everywhere (shop rows, tooltips, rogue cards).
+
+**Active abilities** (only while you are in chat, path, excuse or triage, never while away): Fake Internet (your next excuse lands, at least -35,
+cannot be busted; excuse/triage), Mute Hammer (no mic accidents this round; chat/path), Decoy Status (suspicion x0.5 this round; chat/path),
+Reply-All Macro (answers every owed ping at once at a small penalty; triage). Hotkeys Q W E R.
 
 ## Items (`content/items.js`)
+
+The classic token shop. In **rogue mode classic items do nothing** (the run has its own boons, relics, curses and gold).
 
 ```js
 {
   id: 'decoy-status', icon: '🎭', name: 'Decoy Status',
   desc: "Your status says 'Playing: homework'.",
-  price: 8,                    // tokens
+  price: 8,                    // tokens (whole number)
+  category: 'gear',            // gear | excuses | opsec | hustle | gadgets | gambles (shop tab)
+  tier: 'permanent',           // permanent (always on) | run (held in stock, switches on when a run starts, lasts the run)
+                               //   | consumable (held in stock, ARMED by you before a brb, lasts one round or one ability use)
+  rarity: 'common',            // common | rare | legendary (border colour + badge)
+  tags: ['sus'],               // up to 6 lowercase tags, free text
   stackable: false,            // true = can own several (default max 5)
   max: 3,                      // only with stackable: true (1-99)
-  consumable: false,           // true = used up when your next run starts, lasts one run
-  effects: { susMult: 0.92 }
+  consumable: false,           // legacy flag: true means tier "run" (older item files keep working)
+  effects: { susMult: 0.92 }   // the effects vocabulary above
 }
 ```
 
-Effects (declarative only; they are combined in one place, `getMods()`, together with the channel mods):
+Design budget used by the shipped items (not enforced by the loader): no single item above `pointMult` 1.25 or below `susMult` 0.88,
+permanent items together about x1.2 points. Price bands: common 2-12, rare 10-25, legendary 30-50 tokens.
 
-| Effect | Combines | Meaning |
-| --- | --- | --- |
-| `susMult` | multiply | suspicion gain (0.9 = 10% slower) |
-| `pointMult` | multiply | points gain |
-| `micEventChance` | multiply | how often hot-mic accidents happen |
-| `excuseBonus` | add | extra suspicion removed by a (non-silent) excuse |
-| `graceMins` | add | minutes after your promise before friends start counting |
+**Tokens**: you earn **1 token per 100 points banked** (x `tokenMult`), counted over each run's running total, so no remainder is lost.
+Tokens are kept in `localStorage` (`afksim.tokens`) and survive getting kicked. Buy items from the 🛒 button in the sidebar, the "Shop"
+button above the brb choices, or from the start and game-over screens (category tabs, effect chips, a "after buying" preview, `(max)` when a
+clamp is reached). Owned items are kept in `localStorage` (`afksim.inv`, `inv-<pack>` for a pack's items) across runs.
+The sidebar shows a "your build" line (every active effect; charges as current/max). The share text shows only how many items you own.
 
-Stackable items apply once per copy owned.
+## Your crew (settings: friend names)
 
-**Tokens**: you earn **1 token per 100 points banked**, counted over each run's running total, so no remainder is lost.
-Tokens are kept in `localStorage` (`afksim.tokens`) and survive getting kicked. Buy items from the 🛒 button in the
-sidebar, the "Shop" button above the brb choices, or from the start and game-over screens. Owned items are
-kept in `localStorage` (`afksim.inv`) across runs. Consumables are used up at the start of the next run.
-The share text shows only how many items you own.
+Settings > **Your crew**: up to 8 names (16 characters each) with an optional trait (`roaster`, `hype`, `chill`, `rival`, `chaotic`) replace the
+server's friends **by slot** in chat, the member list, voice channels, digs and share text. The crew keeps the original character ids (so channel
+membership still works), gets stable colours, and applies at the start of a run. Names are sanitised (no `@`, braces, control characters), the
+list is stored in `localStorage` (`afksim.roster`), and Export/Import use a small JSON string (`{"v":1,"crew":[{"n":"Dave","t":"roaster"}]}`,
+max 2048 characters, validated hard). `content/roster-traits.js` may set `AFK_CONTENT.roster = { palette: ['#hex', ...], traits: { roaster: { tags, digRate, quiet, wildcard, lines, digs } } }`;
+without it the built-in traits in `roster.js` are used.
 
 ## Paths (`content/paths.js`)
 
@@ -282,11 +450,178 @@ Create `my-content.js` next to `index.html` and load it in `index.html` after th
 Refresh and open the console with `?debug=1`: the loaded counts go up by one character (and 4 digs), one channel and one item.
 If you typo a field you get a warning like `[afk-content] item "fake-lag" field "price": ... skipped` and the game keeps working.
 
+## Rogue mode (`content/rogue.js`, `content/packs/<id>/rogue.js`)
+
+A run: **3 acts x 4 rounds**. Round 4 of every act is a **boss**; round 2 or 3 of every act is an **elite** (both at ascension 4+).
+A round plays like classic (brb, path, AFK, ping triage, excuse, bank) plus a **goal**: stay AFK `8 / 20 / 40` minutes (act 1/2/3; elites x1.5) and
+come back alive to pick 1 of 3 **boons**. Missing the goal means no boon and a combo reset. Kicks cost an **alt account** (extra life, start 2, max 3);
+no alts left ends the run. After a cleared boss you pick a **relic** (1 of 3). Shops open after rounds 3, 6 and 9; one **event** per act happens after a seeded
+round 1-3 of that act; elites offer an optional **curse** first. Beating the act-3 boss wins. The mode lives in `localStorage` (`afksim.gameMode`);
+URL params `?mode=rogue&seed=K7M2-9QXA&asc=3&loadout=ghost` prefill the rogue start panel (all sanitised; asc and loadout must be unlocked).
+
+`content/rogue.js` registers `AFK_CONTENT.rogue = { flavor, boons, relics, curses, events, bosses, loadouts, ascensions, synergies }`. Every effect uses the
+effects vocabulary above. Ids are `[a-z0-9_-]{1,32}`. Bad entries are skipped with a `[afk-content]` warning like everywhere else.
+Rogue needs at least 1 loadout, 3 boons, 1 relic and a boss for each act, or the Rogue toggle is disabled.
+
+```js
+// boon: offered after a cleared round, bought in the run shop. rarity budgets are ENFORCED by the loader (over-budget entries are skipped):
+//   common: pointMult <= 1.10, susMult >= 0.93, charges <= 1 per key | rare: <= 1.20, >= 0.85, <= 2 | legendary: <= 1.40, >= 0.75, <= 3
+{ id: 'ghost-protocol', name: 'Ghost Protocol', icon: '👻', rarity: 'rare', tags: ['sus', 'drag'], desc: 'Friends lose your trail.',
+  effects: { susMult: 0.88, dragChanceMult: 0.7 },
+  max: 1,                         // stacks (default 1)
+  instant: { gold: 0, sus: 0, alts: 0 },   // optional: applied once on pickup
+  weight: 1, acts: [1, 2, 3],     // offer weight, act gating
+  requires: { tag: 'mic', count: 1 },      // optional: only offered once you own that many boons with the tag
+  unlock: { tokens: 0 } }         // 0 = free from the start, n = Archive price in rogue tokens
+
+// relic: a permanent passive from a boss (same shape without rarity/max/weight/acts/requires; budget = legendary)
+{ id: 'hazard-tape', name: 'Hazard Tape', icon: '🚧', tags: ['sus'], desc: '...', effects: { susMult: 0.8 }, when: { roundType: 'boss' }, unlock: { tokens: 0 } }
+
+// curse: offered before an elite round (accept or decline, max 2 active). payout is granted when you CLEAR that elite round.
+{ id: 'glass-cannon', name: 'Glass Cannon', icon: '💥', desc: '...', duration: 'round',   // round | act | run
+  effects: { pointMult: 1.4, susMult: 1.3 },        // curses may use the whole `single` range of the vocabulary
+  shopPriceMult: 1.3,                                // optional (loan-shark): shop prices while active
+  payout: { gold: 25, boonRarity: 'rare', boonChance: 1, alts: 0, relicReroll: 0, effects: { pointMult: 1.25 }, effectsDuration: 'act' } }  // gold x act scale
+
+// event: choose-your-own-adventure, one per act. text/outcome text may use {me} {friend}
+{ id: 'vending-machine', title: 'The Vending Machine', icon: '🥤', acts: [1, 2, 3], weight: 1, text: '...',
+  choices: [   // 2-4 choices
+    { label: 'Insert coin', hint: 'safe snack', cost: { gold: 1 },                  // cost is paid up front (gold, alts)
+      requires: { goldMin: 20, alts: 2, flag: 'donor' },                             // optional
+      outcomes: [ { w: 1, text: '...', instant: { sus: -12 }, giveBoon: { id: 'x' } | { rarity: 'rare', tag?: 'mic' },
+                    giveCurse: 'curse-id', giveRelic: true, effects: { pointMult: 1.1 }, effectsDuration: 'run' | 'act', flag: 'name' } ] } ] }
+// a rarity with nothing unlocked falls back to the next lower rarity
+
+// boss: act 1-3, objective = AFK this many game minutes and come back with suspicion under the kick line
+{ id: 'ultimatum', name: 'Org Leader Ultimatum', icon: '📣', act: 1, objective: { minMins: 20 }, promise: { p: 15, m: 1.0 },  // forced brb
+  reward: { gold: 100 }, rules: { modeLock: 'no-timeout', graceZero: true, pingRateMult: 1.6 },
+  intro: ['...'], midFight: ['T-minus {t}. Are you there, {me}?'], win: ['...'], fail: ['...'] }
+// rules: modeLock ('no-timeout'|'afk-timeout'), graceZero, pingRateMult 0.5-4, susMultRound / pointMultRound 0.5-2, dragChanceMult 0.25-3,
+//   micEventMult 0.1-3, blackout { at:[a,b], dur:[c,d], susMult } (friends leave voice mid-round), mutedOff, triageTimeMult 0.5-1.5, noDecay,
+//   excuseMult 0.25-1, kickVoteAt 10-100, forceVc <voice channel id> (falls back to the channel with the highest mods), pingShield 0-4 (granted for the round)
+
+// loadout: starting kit (Archive unlock). unlock.ascMax N additionally needs a win at ascension N
+{ id: 'ghost', name: 'Ghost', icon: '👻', desc: '...', unlock: { tokens: 60 }, effects: { susMult: 0.85, pointMult: 0.85 },
+  alts: 2, gold: 0, rerolls: 1, boons: [], curses: [], freeBoon: 'sound-board', offerCards: 3 }   // offerCards 3 or 4 (Gambler)
+
+// ascensions: levels 1..5 in order, stacking. rules: bossPingRateAdd, lorCapAdd, altsStart, bossObjectiveMult, elitesPerAct, graceCap, startCurse
+{ level: 1, name: 'Tight Leash', desc: '...', effects: { susMult: 1.08 }, rules: {}, scoreMult: 1.15 }
+
+// synergy: when you own `count` boons with a tag, a bonus source switches on (once)
+{ id: 'mic-network', tag: 'mic', count: 3, name: 'Hot Mic Network', effects: { clipBonusMult: 1.5 }, instant: { gold: 25 }, desc: '...' }
+
+// flavor: act names, run name, labels
+flavor: { actNames: ['The Lobby', 'The Grind', 'The Void'], runName: 'Night Shift', bossLabel: 'BOSS', eliteLabel: 'ELITE' }
+```
+
+**Rarity weights** per offer slot by act: act 1 `70/27/3`, act 2 `55/35/10`, act 3 `45/38/17` (common/rare/legendary). An offer is 3 distinct boons (4 with the
+Gambler), none at `max`, only unlocked, act-gated. **Pity**: after two offers with no rare+ the next first slot is rare+. A cleared elite makes slot 1 rare+ (a curse
+payout can raise it). Rerolls start at 1 (loadout), +1 from the shop and some payouts. If a rarity has nothing available the offer falls back to the nearest rarity.
+
+**Gold** (separate from classic tokens and rogue tokens): `floor(points banked / 100 x 0.35 x goldMult)` per settled round, plus boss, elite and event gold.
+Shop prices scale with the act `x1 / x2.5 / x5`: common boon 8, rare 16, legendary 40 (act 2+), ability charge 4, heal (-25 suspicion) 6, remove a curse 12, +1 alt 30
+(once per shop, max 3 alts), +1 reroll 5, reroll the shop `2 + 2n`. **Act pressure**: friends drag you out `x1 / x1.48 / x2.15` as often by act and a further `x1 / x2.5 / x4.1`
+in the boss round (see `RG_TUNE` in `js/rogue.js`); the boss intro card states it.
+
+**Score** = `floor(points banked x ascension score multiplier x (win ? 1.5 : 1))`. **Rogue tokens** at run end = `floor(points / 100 x 0.2 x tokenMult) + 5 per boss + (win ? 25 + 10 x ascension : 0)`.
+The Archive (start panel) spends them on boons, relics and loadouts. Winning at your highest unlocked ascension unlocks the next (1-5). Meta lives in
+`localStorage` (`afksim.rogue`: tokens, ascMax, wins, runs, unlocked ids, best score per ascension), the in-progress run in `afksim.rogueRun` (saved at every intermission,
+re-validated against the current content on resume), the rogue leaderboard in `afksim.rogueScores` (top 10, separate from classic `afksim.scores`).
+
+### Seeding and what is NOT seeded
+
+Rogue uses keyed random streams (`rng.js`): every decision draws from a fresh stream that depends only on `(seed, name, index)`, so choices cannot desync.
+
+| Stream | Decides |
+| --- | --- |
+| `env`, round | server mode, afk-timeout threshold, voice-channel roam, elite placement (per act), the 3 path options |
+| `boon`, round, reroll | the boon offer (cards depend on the seed, the round, the reroll count, the boons you already own and the pity counter) |
+| `shop`, act, reroll | shop stock |
+| `event`, round, choice | which event, and each outcome roll; the event round per act comes from `event`/`round`/act |
+| `curse`, round | the curse offered before an elite (and its legendary-chance roll) |
+| `boss`, act | which boss of the act |
+| `relic`, act, reroll | the relic offer |
+| `start` | the random starting curse at ascension 5 |
+
+**Seeded**: the whole map (round types, modes, thresholds, channels, bosses, event rounds), boon / relic / shop / curse / event selection and outcomes, and the path options.
+Same seed + same ascension = same plan, whatever the loadout. Same seed + same choices = same offers; offers can differ after different picks because owned boons are excluded
+("the first offer of each round is identical" only while the owned set is). **Not seeded** (plain `Math.random`): chat lines and flavor, friend ping timing and targets, mic accident
+rolls, drag rolls, left-on-read details, the boss chatter and blackout timing, excuse rolls and busted-excuse rolls, BRB and excuse text options. Combat consumption also depends on frame timing, so even a
+seeded stream could not reproduce it. In short: same seed = same map, not same drama.
+
+### How packs extend rogue content (`content/packs/<id>/rogue.js`)
+
+```js
+window.AFK_PACKS = window.AFK_PACKS || {};
+window.AFK_PACKS.bobernet = window.AFK_PACKS.bobernet || {};
+window.AFK_PACKS.bobernet.rogue = {
+  disable: ['sticky-note'],                       // remove base entries by id (any type) before offering
+  flavor: { actNames: ['Hangar Bay', 'Jump Point', 'The Outer Belt'], runName: 'Fleet Rotation', bossLabel: 'FLEET ALERT', eliteLabel: 'CONTESTED ZONE',
+            bossIntro: { ultimatum: ['...'] } },  // presentation only
+  override: {                                     // SAME id as a base entry: only name / icon / desc / intro / text / title / label / lines are read
+    bosses: [ { id: 'ultimatum', name: 'Fleet Commander Ultimatum', icon: '🛰️', intro: ['...'], lines: { midFight: ['...'], win: ['...'], fail: ['...'] } } ],
+    boons:  [ { id: 'caffeine-drip', name: 'Quantum Fuel Drip', desc: '...' } ] },
+  boons: [ ... ], relics: [ ... ], curses: [ ... ], events: [ ... ], bosses: [ ... ], loadouts: [ ... ]   // NEW ids only, validated like base content (budgets included)
+};
+```
+
+Add `'rogue.js'` to the pack manifest `files` and a `<script>` tag before `loader.js`. A new entry whose id collides with a base id is treated as an override (effects and rules in it are ignored with a warning).
+Packs cannot change ascensions. Events may reference base boons and curses by id; a dangling id drops that outcome with a warning. A pack without `rogue.js` plays rogue with base content and flavor.
+The merged result for a pack is `AFK_RESOLVED.rogueFor(packId)`.
+
+### Balance
+
+Numbers are checked with `sim_rogue.py` (it plays whole runs through the real game code, headlessly, with the `?debug=1` fast-forward harness `window.__afk.rogue`):
+
+```
+uv run --with playwright python sim_rogue.py main 400        # A0, 400 runs per policy
+uv run --with playwright python sim_rogue.py asc 160         # A0..A5
+uv run --with playwright python sim_rogue.py sweep 20 random # force every boon / relic once
+uv run --with playwright python sim_rogue.py loadouts 100
+```
+
+Policies: `random` picks boons, events, curses and shop items at random (and a random path); `greedy` scores boons and purchases, answers pings, buys the spare alt, parks "alone in VC" for bosses and
+pushes its luck less. Both promise the longest brb, stay past the promise to the round goal and come back when suspicion gets high. Win rates (Wilson 95% interval), A0, no loadout bonuses:
+
+| policy | runs | win rate | mean score | score p10 / p50 / p90 | died act 1 / 2 / 3 / won |
+| --- | --- | --- | --- | --- | --- |
+| random | 400 | **11.5%** (9-15) | 23,814 | 9.9k / 22.5k / 38.4k | 0 / 131 / 223 / 46 |
+| greedy | 400 | **46.8%** (42-52) | 31,330 | 11.9k / 31.1k / 47.1k | 0 / 59 / 154 / 187 |
+
+Ascension ladder (greedy, 160 runs each; random in brackets): A0 45.6% (15.6), A1 33.8% (6.2), A2 30.6% (7.5), A3 30.6% (1.9), A4 13.8% (0.6), A5 12.5% (0.6).
+Per-ascension drag pressure (small `dragChanceMult` effects in `content/rogue.js`) was added to the ascension effects because suspicion alone almost never kills a competent player: the real killer is being
+dragged out of a boss round before the objective.
+
+Time: a whole run is about 13.7 rounds and 3.5-3.7 real minutes of AFK waiting on average (max about 5 min over 800 runs), roughly 8 minutes including picks, returns and intermissions; one round is about
+0.5 min on average (a human reading the cards takes 1-2 min). Far below the 25 minute budget.
+
+Single-entry sweep (each boon or relic forced from round 1, random policy, 20 runs each; baseline 7-14% depending on the batch): no entry stays above +25 pp once confirmed with more runs. The 20-run
+table is noisy (one standard error is about 10 pp); the only entry it put above +25 pp, `witness-protection`, measures +17 pp over 240 runs. After the tuning pass the strongest entries are
+`witness-protection` (+17 pp), `omniscient-mod` (+11 pp) and the drag-reducers `ghost-protocol` and `server-key` (+6 to +11 pp); everything else is within noise (under +6 pp). Classic shop items do not apply in rogue,
+so there is nothing to sweep there.
+
+Loadouts (100 runs each, random / greedy win rate): intern 8 / 36, hot-mic-hero 11 / 52, ghost 16 / 65 (the strongest; its drag reduction was cut from x0.6 to x0.8), gambler 10 / 33, diplomat 16 / 42, speedrunner 8 / 47, hauler 12 / 40.
+The BoberNet pack plays a little easier (random 14%, greedy 57.5%) because it adds drag-reducing boons.
+
+Tuning constants (`RG_TUNE` in `js/rogue.js`): act drag pressure `x1 / x1.48 / x2.15`, boss-round drag pressure `x1 / x2.5 / x4.1` (on top of the boss's own rules), elite `points x1.4, suspicion x1.15`,
+gold `0.35 per 100 points`, rogue tokens `0.2 per 100 points` (the spec had 0.5, which paid about 120 tokens per run; at 0.2 a typical run pays 40-80). Data tuned from the first content drop: witness-protection
+(drag x0.5 -> x0.76), server-key (x0.5 -> x0.62), ghost loadout (drag x0.6 -> x0.8), ascension effects (drag), friday-raid (the duplicated pointMultRound/susMultRound removed, the raid channel supplies them),
+afk-kings-shrine (the alt is paid once, as the choice cost).
+
+### Rogue test hooks (`?debug=1`)
+
+`window.__afk.rogue`: `fast(on)` (make `later()` instant: a discrete-event queue), `drain()`, `start({seed, ld, asc})`, `state()`, `plan(seed, asc)`, `offer()`, `cards()`, `pick(n)`, `give({boon, relic, curse, gold, alts, sus})`,
+`jump(round)`, `back()` (come back from AFK), `tick(minutes)`, `forceEvent(id)`, `shopNow()`, `relicNow()`, `boonNow()`, `curseNow()`, `settle()`, `end(win)`, `meta()`, `setMeta(obj)`, `saved()`, `resume()`,
+`scores()`, `shareText(entry)`, `rollBoons(seed, round, reroll, act, n)`, `shopStock(seed, act, n)`, `eventFor(seed, round)`, `rules(asc)`, `tune(obj)` (the `RG_TUNE` difficulty knobs), `auto(policy, untilPhases)`,
+`sim({policy, seed, ld, asc, forceBoon, forceRelic, forceCurse})` and `simMany(opts, n)` (policies `random`, `greedy`).
+
 ## Tests
 
 `?debug=1` exposes `window.__afk` (state, `tick(minutes)`, `go(pathId)`, `buy(id)`, `mods()`, `setChannel(id)`, `resident()`,
 `stats.digs`, and for channels `say(channelId, text)`, `switchCh(id)`, `mute(id)`, `skipTriage()`, `lorPreview()`, `favCh()`)
-for headless tests. Without the flag nothing is exposed.
+for headless tests. Without the flag nothing is exposed. The rogue harness is `window.__afk.rogue` (see "Rogue test hooks").
+Browser suites live outside the repo while the feature is in review (`t.py`, `test_paths.py`, `test_content.py`, `test_pack.py`, `test_channels.py`, `test_roster.py`,
+`test_effects.py`, `test_rogue.py`: `uv run --with playwright python <file>` against a local `python -m http.server 8080`) and `sim_rogue.py` is the balance simulator.
 
 
 ## Content packs (`content/packs/<id>/`)
@@ -311,12 +646,12 @@ Shipped: `content/packs/bobernet/` ("BoberNet", a Star Citizen org parody).
   base: 'content/packs/bobernet/',     // optional folder for the files below (default content/packs/<id>/)
   files: ['data.js', 'dialog.js'],     // core files (small). Add them as <script> tags in index.html, or the game loads them on select
   lazy: ['bulk.js'],                   // heavy files: never block first render, loaded after first paint and only while the pack is active
-  requires: 4                          // minimum content-system version (this game is 4); a pack needing more is skipped with a warning
+  requires: 5                          // minimum content-system version (this game is 5); a pack needing more is skipped with a warning
 });
 ```
 
 Add the manifest and the core `files` as `<script>` tags in `index.html` before `loader.js` (so the pack is ready at first paint).
-A pack whose files are *not* listed there is loaded on demand the first time it is selected.
+A pack whose files are *not* listed there is loaded on demand the first time it is selected. So `files` must be complete: every data file the pack needs (`ambient.js`, `rogue.js`, `gamenight/*.js` incl. `gamenight/reactions.js`), not just the ones in `index.html`.
 `lazy` files are never listed in `index.html`.
 
 ### Files (each sets one key of `window.AFK_PACKS[id]`)
@@ -361,3 +696,53 @@ the `insurance-claim-form` item), `elevator-of-doom` (mic event `flush`/`chewing
 5. Add `<script>` tags for `manifest.js` and your core files in `index.html` before `loader.js`.
 6. Open the page with `?debug=1`. Bad entries are skipped with a console warning prefixed by the pack id, for example
    `[afk-content] [mypack] item "x" field "price": ...`; `AFK_RESOLVED.counts.packs` shows how many packs registered, and the pack picker appears in Settings once a second pack is valid.
+
+## Code layout
+
+The engine used to be one `game.js` and one `style.css`. It is now split so several people (or agents) can edit
+different files at once. Data stays in `content/`; behaviour is in `js/`; styling in `css/` (+ `themes.css`).
+Short version (full detail, load order and rules in `ARCHITECTURE.md`):
+
+| Want to change | Edit |
+| --- | --- |
+| helpers, state `S`, item mods (`getMods`), `{me}` tokens | `js/core.js` |
+| line pipeline, packs, brb/excuse option picking | `js/lines.js` |
+| text channels, pings, triage, slowmode, actions panel | `js/chat.js` |
+| the AFK round itself (paths, excuses, judging, kick) | `js/afk.js` |
+| shop modal, abilities, inventory strip | `js/shop.js` |
+| settings, your crew | `js/settings.js` |
+| rogue rules / rounds / UI | `js/rogue.js`, `js/rogue-run.js`, `js/rogue-ui.js` |
+| Game Night glue (engine is `gamenight.js`) | `js/gn.js` |
+| boot, input, main loop | `js/main.js` |
+| styles | `css/<area>.css`; colors per theme in `themes.css` |
+
+## Game Night mode (`content/gamenight/*.js`, `content/packs/<id>/gamenight/*.js`)
+
+Mode id `gamenight`, title `{Day} Never Happens`. You are the flake: every week you invent an excuse (5-slot Excuse Builder), the
+ledger remembers it, friends investigate, and morale/strikes decide when you are kicked. Engine: `gamenight.js` (`AFK_GN`),
+glue: `js/gn.js`, styles: `css/gamenight.css`, validation: `loader.js` ("game night content" block; bad entries warn and are
+skipped, a section under its minimum falls back to built-ins). Settings (`afksim.gn`): weekday, time, game name, length 8/12/endless,
+strikes 2/3/5, use crew, difficulty. Own leaderboard (`afksim.gn.best`) and share text; run state is not persisted.
+
+| File | Registers | Entry shape (all text plain, rendered with `textContent`) |
+| --- | --- | --- |
+| `parts.js` | `gamenight.parts` | `id slot label text short elab tags ttl contradicts requires callback fits proofLabel lastMinute unlocks weight`. Slots: cause escalation proof witness promise. `short` is needed for cause/proof, `proofLabel` for proof, `elab` is 1-5 |
+| `reactions.js` | `gamenight.reactions` | `byBand[calm\|eyebrow\|sus\|detective][impressed\|neutral\|exasperated\|detective]` (entries `string` or `{t, eMin, lvl, when}`), `repeat contradiction callbackReward proofDemand proofPass proofPerfect proofFail strike strikeFinal detectiveRise detectiveStandDown detectiveQuiz believed proofDecoys`, `friendLines` (`_default`, personality pools `_roaster _hype _chill _rival _chaotic`, or a friend id) |
+| `plan.js` | `gamenight.plan` | `gameNames argue{day,time,game} gamePicker beats{morning,afternoon,hour,zero,zeroAfter} counterOffers disbandThreat cancelOpeners updateLines differentGame` |
+| `outcomes.js` | `gamenight.outcomes[]` | `id kind title weight when{weekMin,weekMax,kMin,kMax,eMin,eMax,flakersMin,flakersMax,moraleMax,strikesMin,tags,approach} text[1-3] chat[0-2] effects{morale,skep,strike,ptsMult}`. Kinds: skipped called-out dragged-in played-without-you everyone-flaked different-game just-talked update-hell ending (`ending`: kicked disbanded survived never-happens retired) |
+| `flakes.js` | `gamenight.flakes` | `traits friendExcuses events solidarity playerCatchesFriend snowball` |
+| `achievements.js` | `gamenight.achievements awards titles` | `{id name desc hint}`, `{id name desc}`, `{id name minPts}`; unlock rules live in the engine, keyed by id |
+
+Tokens: `{me} {friend} {day} {time} {game} {week}`; `{cause}`/`{prop}` only in reactions, outcomes and `flakes.solidarity` (a line whose
+token is empty is skipped). Single-pass substitution; unknown tokens are stripped. Tags are plain strings; a claim grants its parts' tags
+for `ttl` weeks, `contradicts` lists active tags that make a part a lie that clashes with the ledger, `requires` + `callback: true`
+makes a callback part (offered only while the tag is active). Never let a part contradict a tag it grants or that a part it `fits`
+grants.
+
+Packs: `window.AFK_PACKS[id].gamenight = { parts, reactions, ... }`, same keys. Arrays of objects with an `id` merge by id (same id
+replaces, new id adds); string/`{t}` pools append to the core pool unless the pack lists the dotted path in `replace: [...]`; do not
+repeat core lines verbatim. Test: `?debug=1` exposes `window.__afk.gn` (seed, fast, drain, state, setSettings, pInvestigate, ...).
+
+## Ambient server flavor
+
+`content/ambient.js` (`AFK_CONTENT.ambient`, classic) and `content/packs/<id>/ambient.js` (`AFK_PACKS.<id>.ambient`) add roles, 45-60 members, 14-20 extra `x-` text/voice channels, chatter, bot lines, events, topics + pins, server rail icons and presence-shuffle weights. Pure flavor, wired by `js/ambient.js`; full schema in `content/AMBIENT_SCHEMA.md`. Bad entries are skipped with one console warning, never an error. Events use `{me}` rarely at runtime (capped per session) and `{friend}` resolves to an ambient member, so joins/leaves do not name your crew.

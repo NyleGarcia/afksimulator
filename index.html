@@ -7,7 +7,20 @@
   <meta name="description" content="Say brb. Don't come back.">
   <script>try{var t=JSON.parse(localStorage.getItem("afksim.theme"));if(typeof t==="string"&&/^[a-z-]{1,20}$/.test(t))document.documentElement.dataset.theme=t}catch(e){}</script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💤</text></svg>">
-  <link rel="stylesheet" href="style.css">
+  <!-- stylesheets: cascade order matters (later files win ties); themes.css must stay last. See ARCHITECTURE.md -->
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/chat.css">
+  <link rel="stylesheet" href="css/modal.css">
+  <link rel="stylesheet" href="css/settings.css">
+  <link rel="stylesheet" href="css/channels.css">
+  <!-- emoji reactions, view-only channel lock (js/reactions.js) -->
+  <link rel="stylesheet" href="css/reactions.css">
+  <link rel="stylesheet" href="css/shop.css">
+  <link rel="stylesheet" href="css/rogue.css">
+  <link rel="stylesheet" href="css/gamenight.css">
+  <!-- ambient server flavor (js/ambient.js) -->
+  <link rel="stylesheet" href="css/ambient.css">
+  <link rel="stylesheet" href="css/voice.css">
   <link rel="stylesheet" href="themes.css">
 </head>
 <body>
@@ -26,6 +39,7 @@
       <div class="ch-group">VOICE CHANNELS</div>
       <div id="voiceChans"></div>
       <div id="invStrip" class="inv-strip" aria-label="Tokens and items"></div>
+      <div id="buildLine" class="build-line" aria-label="Active effects" hidden></div>
       <div class="me-bar">
         <div id="meAvatar" class="avatar me">P<span class="dot online"></span></div>
         <div class="me-info">
@@ -46,13 +60,15 @@
         </div>
         <div class="hud">
           <span>Score <b id="hudScore">0</b></span>
-          <span>Round <b id="hudRound">1</b></span>
+          <span><span id="hudRoundL">Round</span> <b id="hudRound">1</b></span>
           <span>Combo <b id="hudCombo">x0</b></span>
           <span>Best <b id="hudBest">0</b></span>
         </div>
       </header>
+      <div id="rgHud" class="rg-hud" aria-label="Run status" hidden></div>
+      <div id="gnHud" class="gn-hud" aria-label="Game Night status" hidden></div>
       <div class="sus" title="How done your friends are with you">
-        <span class="sus-label">Friend suspicion</span>
+        <span id="susLabel" class="sus-label">Friend suspicion</span>
         <div class="sus-bar" role="progressbar" aria-label="Friend suspicion" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="susFill" class="sus-fill"></div></div>
         <span id="susPct" class="sus-pct">0%</span>
       </div>
@@ -71,6 +87,11 @@
           <span id="afkPending" class="afk-pending">+0 pending</span>
           <span id="afkPromise" class="afk-promise"></span>
         </div>
+        <div id="bossBar" class="boss-bar" role="progressbar" aria-label="Round goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+          <div class="boss-text"></div>
+          <div class="boss-track"><div class="boss-fill"></div></div>
+          <div class="boss-ok"></div>
+        </div>
         <div id="afkCombo" class="afk-combo"></div>
         <div id="afkPath" class="afk-path"></div>
         <div id="afkStatus" class="afk-status"></div>
@@ -78,6 +99,7 @@
       </section>
 
       <section id="actions" class="actions" aria-live="polite"></section>
+      <section id="abilityStrip" class="ability-strip" aria-label="Abilities" hidden></section>
 
       <div class="composer"><span id="composerText">Message #general</span></div>
     </main>
@@ -99,7 +121,17 @@
   <script src="content/characters.js"></script>
   <script src="content/channels.js"></script>
   <script src="content/items.js"></script>
+  <script src="content/rogue.js"></script>
   <script src="content/themes.js"></script>
+  <!-- ambient server flavor: extra members/channels/chatter (content/AMBIENT_SCHEMA.md) -->
+  <script src="content/ambient.js"></script>
+  <!-- game night mode content (see CONTENT.md "Game Night mode") -->
+  <script src="content/gamenight/achievements.js"></script>
+  <script src="content/gamenight/flakes.js"></script>
+  <script src="content/gamenight/outcomes.js"></script>
+  <script src="content/gamenight/parts.js"></script>
+  <script src="content/gamenight/plan.js"></script>
+  <script src="content/gamenight/reactions.js"></script>
   <!-- content pack: small core files only. Its heavy bulk.js is NOT listed here; game.js adds it after first paint when the pack is active -->
   <script src="content/packs/bobernet/manifest.js"></script>
   <script src="content/packs/bobernet/pools.js"></script>
@@ -108,7 +140,39 @@
   <script src="content/packs/bobernet/dialog.js"></script>
   <script src="content/packs/bobernet/data.js"></script>
   <script src="content/packs/bobernet/parody-orgs.js"></script>
+  <script src="content/packs/bobernet/rogue.js"></script>
+  <script src="content/packs/bobernet/gamenight/flakes.js"></script>
+  <script src="content/packs/bobernet/gamenight/outcomes.js"></script>
+  <script src="content/packs/bobernet/gamenight/parts.js"></script>
+  <script src="content/packs/bobernet/gamenight/plan.js"></script>
+  <script src="content/packs/bobernet/gamenight/reactions.js"></script>
+  <script src="content/packs/bobernet/ambient.js"></script>
   <script src="loader.js"></script>
-  <script src="game.js"></script>
+  <script src="rng.js"></script>
+  <script src="effects.js"></script>
+  <script src="roster.js"></script>
+  <script src="gamenight.js"></script>
+  <!-- game code: classic scripts sharing ONE script scope (top-level const/let/function are visible to later files).
+       ORDER IS LOAD-BEARING: a file may only run top-level code that needs things from files above it; everything
+       else is looked up lazily at call time. Add new files in the right spot and register them in ARCHITECTURE.md. -->
+  <script src="js/core.js"></script>
+  <script src="js/lines.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/chat.js"></script>
+  <!-- channel topics, view-only channels, emoji reactions: chat.js calls into it at run time (CONTENT.md) -->
+  <script src="js/reactions.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/ambient.js"></script>
+  <script src="js/shop.js"></script>
+  <script src="js/afk.js"></script>
+  <script src="js/voice.js"></script>
+  <script src="js/overlays.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/rogue.js"></script>
+  <script src="js/rogue-run.js"></script>
+  <script src="js/gn.js"></script>
+  <script src="js/rogue-ui.js"></script>
+  <script src="js/debug.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>

@@ -264,17 +264,32 @@ window.AFK_PACKS.bobernet.data = {
 
   channels: [
     { id: 'general', name: 'general', icon: '#', type: 'text', isAfk: false, members: ['vexley', 'tallow', 'dr-pebble', 'clank', 'wisp', 'rook'], mods: { susMult: 1, pointMult: 1 }, desc: 'Chat about everything and nothing. Mostly nothing.', visibility: 0.85, busyness: 0.8, replies: [{ t: 'o7 here', r: [1, 5] }, { t: 'on station, whats up', r: [2, 7] }, { t: 'sorry, hangar WiFi', r: [3, 8] }] },
-    { id: 'ship-porn', name: 'ship-porn', icon: '#', type: 'text', isAfk: false, members: ['wisp', 'tallow', 'clank'], mods: { susMult: 1, pointMult: 1 }, desc: 'Screenshots of shiny hulls. Strictly wholesome, mostly.', visibility: 0.4, busyness: 0.5, muted: true, muteDelay: [4, 12], replies: [{ t: 'nice hull', r: [0, 5] }, { t: 'o7', r: [1, 4] }, { t: 'where is the paint from', r: [0, 6] }] },
+    { id: 'ship-art', name: 'ship-art', icon: '#', type: 'text', isAfk: false, members: ['wisp', 'tallow', 'clank'], mods: { susMult: 1, pointMult: 1 }, desc: 'Screenshots and renders of shiny hulls. Ship art only.', visibility: 0.4, busyness: 0.5, muted: true, muteDelay: [4, 12], replies: [{ t: 'nice hull', r: [0, 5] }, { t: 'o7', r: [1, 4] }, { t: 'where is the paint from', r: [0, 6] }] },
     { id: 'trade-routes', name: 'trade-routes', icon: '#', type: 'text', isAfk: false, members: ['tallow', 'clank', 'dr-pebble'], mods: { susMult: 1, pointMult: 1 }, desc: 'Cargo, prices, and complaints about prices.', visibility: 0.5, busyness: 0.6, replies: [{ t: 'cargo is fine, i am here', r: [1, 6] }, { t: 'prices are wrong again', r: [0, 5] }, { t: 'mining, will report', r: [2, 7] }] },
-    { id: 'org-announcements', name: 'org-announcements', icon: '#', type: 'text', isAfk: false, members: ['vexley', 'tallow'], mods: { susMult: 1, pointMult: 1 }, desc: 'Official stuff. Read it. You will not.', visibility: 0.95, busyness: 0.2, slowmodeSec: 20, replies: [{ t: 'acknowledged', r: [3, 9] }, { t: 'read and understood (not read)', r: [-3, 8] }, { t: 'o7', r: [1, 5] }] },
+    { id: 'org-announcements', name: 'org-announcements', icon: '#', type: 'text', isAfk: false, members: ['vexley', 'tallow'], mods: { susMult: 1, pointMult: 1 }, desc: 'Official announcements. View only. Read it. You will not.', visibility: 0.95, busyness: 0.2, slowmodeSec: 20, readOnly: true, posters: ['vexley', 'tallow'], topic: 'org-announcements', replies: [{ t: 'acknowledged', r: [3, 9] }, { t: 'read and understood (not read)', r: [-3, 8] }, { t: 'o7', r: [1, 5] }] },
     { id: 'clips', name: 'clips', icon: '#', type: 'text', isAfk: false, members: ['rook', 'wisp', 'dr-pebble', 'clank'], mods: { susMult: 1, pointMult: 1 }, desc: 'Highlights, fails, and the elevator incident.', visibility: 0.25, busyness: 0.3, replies: [{ t: 'delete that clip', r: [0, 5] }, { t: 'that was a feature', r: [-2, 6] }, { t: 'who is clipping me', r: [1, 5] }] },
     { id: 'pvp-ops', name: 'pvp-ops', icon: '#', type: 'text', isAfk: false, members: ['vexley', 'rook', 'dr-pebble', 'clank'], mods: { susMult: 1, pointMult: 1 }, desc: 'Org fight planning. Attendance is, theoretically, mandatory.', visibility: 0.7, busyness: 0.6, replies: [{ t: 'on my way (hangar)', r: [1, 6] }, { t: 'where is the fight', r: [2, 7] }, { t: 'stuck in the elevator', r: [-4, 8] }] },
     { id: 'hangar-bay-vc', name: 'Hangar Bay VC', icon: '🔊', type: 'voice', isAfk: false, members: ['vexley', 'tallow', 'clank', 'wisp'], mods: { susMult: 1, pointMult: 1 }, desc: 'Default hangout. Echoey. Has an elevator.' },
-    { id: 'quantum-lounge', name: 'Quantum Lounge', icon: '🔊', type: 'voice', isAfk: false, members: ['wisp', 'dr-pebble', 'rook'], mods: { susMult: 1, pointMult: 1 }, desc: 'Chill spot between jumps.' },
-    { id: 'cargo-run-vc', name: 'Cargo Run VC', icon: '🔊', type: 'voice', isAfk: false, members: ['clank', 'tallow'], mods: { susMult: 0.8, pointMult: 1 }, desc: 'Hauling chat. People forgive silence here.' },
+    { id: 'quantum-lounge', name: 'Quantum Lounge', icon: '🔊', type: 'voice', isAfk: false, members: ['wisp', 'dr-pebble', 'rook'], mods: { susMult: 0.9, pointMult: 0.9 }, desc: 'Chill spot between jumps. Nobody is counting.' },
+    { id: 'cargo-run-vc', name: 'Cargo Run VC', icon: '🔊', type: 'voice', isAfk: false, members: ['clank', 'tallow'], mods: { susMult: 0.75, pointMult: 0.85 }, desc: 'Hauling chat. People forgive silence here. The points are small.' },
     { id: 'bunker-ops', name: 'Bunker Ops', icon: '🔊', type: 'voice', isAfk: false, members: ['vexley', 'rook', 'dr-pebble'], mods: { susMult: 1.2, pointMult: 1.2 }, desc: 'Tense, loud, high stakes. They notice everything.' },
+    { id: 'strike-comms', name: 'Strike Comms', icon: '🔊', type: 'voice', isAfk: false, members: ['vexley', 'rook'], mods: { susMult: 1.35, pointMult: 1.4 }, desc: 'PvP strike channel. Tense, huge points, nobody forgives a silent mic.' },
     { id: 'cryo-pod', name: 'Cryo Pod', icon: '🧊', type: 'voice', isAfk: true, members: [], mods: { susMult: 1, pointMult: 1 }, desc: 'The AFK channel. Do not disturb the Popsicle.' }
   ],
+
+  // per voice channel flavor (js/voice.js): hello = friend line when you join, brb = a promise that fits the room
+  voiceFlavor: {
+    'hangar-bay-vc': { hello: ['{me} is in the bay. mind the elevator', 'o7 {me}, you made it to the hangar', 'welcome back to the echo chamber'],
+      brb: [{ t: 'brb checking my ship loadout', p: 5, m: 1.1 }] },
+    'quantum-lounge': { hello: ['oh hey {me}, pull up a crate', 'no rush in the lounge', 'quantum drive is warming up. relax {me}'],
+      brb: [{ t: 'brb making tea, stay chill', p: 12, m: 0.95 }, { t: 'brb quantum snack run', p: 8, m: 1.05 }] },
+    'cargo-run-vc': { hello: ['{me} on the haul. grab a box', 'cargo run is quiet, perfect', 'nobody talks during loading, {me}. it is fine'],
+      brb: [{ t: 'brb loading the last crate', p: 15, m: 0.95 }, { t: 'brb hauling, dead air incoming', p: 20, m: 0.9 }] },
+    'bunker-ops': { hello: ['{me}. you are late to the briefing', 'bunker is hot, {me}. stay on comms', 'we are mid-plan. mic discipline, {me}'],
+      brb: [{ t: 'brb 1 min, bio break', p: 1, m: 1.65 }, { t: 'brb 2, grabbing meds', p: 2, m: 1.4 }] },
+    'strike-comms': { hello: ['STRIKE COMMS. {me}. report.', 'oh good, {me} is on the strike', 'comms are live. no dead air, {me}'],
+      brb: [{ t: '30 sec brb, covering my six', p: 1, m: 1.7 }, { t: 'brb 1 min, reloading', p: 1, m: 1.6 }] }
+  },
 
   items: [
     { id: 'insurance-claim-form', icon: '📄', name: 'Insurance Claim Form', desc: 'Forgive one bad return. The paperwork takes forever, but it works.', price: 5, effects: { susMult: 0.9, excuseBonus: 10 }, stackable: false, consumable: true },

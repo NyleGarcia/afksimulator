@@ -1,0 +1,44 @@
+/* ambient server flavor (js/ambient.js): extra channels, grouped roster, rail icons, read-only peek drawer */
+.amb-side { margin-top: 0; } /* no inner scroll: the whole sidebar scrolls, like the real channels above */
+.amb-cat { display: flex; align-items: center; gap: 4px; width: 100%; padding: 16px 16px 4px; background: none; border: 0; cursor: pointer; color: var(--muted); font: inherit; font-size: 12px; font-weight: 700; letter-spacing: .03em; text-align: left; } /* same look as .ch-group */
+.amb-cat:hover { color: var(--text); }
+.amb-cat:focus-visible, .amb-ch:focus-visible, .amb-peek-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.amb-arrow { width: 1em; flex: none; }
+.amb-cat-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.amb-cat-count:empty { display: none; }
+.amb-cat-count, .amb-badge { background: var(--bg-hover); color: var(--text); }
+.amb-cat-count { font-size: 10px; font-weight: 800; border-radius: 9px; min-width: 16px; padding: 1px 5px; text-align: center; }
+.amb-ch { width: calc(100% - 16px); margin: 1px 8px; padding: 6px 8px; font: inherit; text-align: left; }
+.amb-vc { display: flex; align-items: center; gap: 6px; margin: 1px 8px; padding: 4px 8px; color: var(--muted); cursor: default; font: inherit; }
+.amb-vms { padding-left: 32px; margin: 0; }
+.amb-vm { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--muted); font-size: 14px; } /* same as .vc-member */
+.amb-vm .avatar { width: 22px; height: 22px; font-size: 11px; }
+.amb-members { padding-bottom: 8px; }
+.amb-grp { margin-top: 10px; }
+.amb-member { min-width: 0; }
+.amb-info { min-width: 0; flex: 1; }
+.amb-info .member-name, .amb-info .member-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.amb-bot { margin-left: 6px; padding: 0 4px; border-radius: 3px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 800; vertical-align: middle; }
+.amb-srv { position: relative; color: #fff; cursor: pointer; }
+.amb-srv:hover { border-radius: 16px; }
+.amb-srv.has-unread::before { content: ""; position: absolute; left: -10px; top: 20px; width: 6px; height: 8px; border-radius: 0 4px 4px 0; background: var(--text); }
+.amb-mention { position: absolute; right: -2px; bottom: -2px; min-width: 18px; height: 18px; line-height: 18px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 800; text-align: center; }
+.servers [hidden] { display: none !important; }
+.amb-peek { position: fixed; z-index: 8; /* below the modal (10) and toasts (20) */ right: 12px; bottom: 12px; width: min(360px, calc(100vw - 24px)); max-height: 60vh; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--bg-hover); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0, 0, 0, .45); }
+.amb-peek-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--bg-3); font-weight: 700; }
+.amb-peek-x { min-width: 32px; min-height: 32px; }
+.amb-peek-topic { padding: 8px 12px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--bg-3); }
+.amb-pins { padding: 6px 12px; border-bottom: 1px solid var(--bg-3); font-size: 12px; max-height: 20vh; overflow-y: auto; }
+.amb-pins-h { font-weight: 700; color: var(--muted); margin-bottom: 2px; }
+.amb-pin { padding: 2px 0 2px 8px; border-left: 2px solid var(--idle); margin: 3px 0; overflow-wrap: anywhere; }
+.amb-log { flex: 1; min-height: 80px; overflow-y: auto; padding: 4px 0; }
+.amb-log .msg-text { overflow-wrap: anywhere; }
+.amb-sys { color: var(--muted); font-size: 13px; padding: 4px 16px; }
+.amb-peek-foot { padding: 6px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--bg-3); }
+/* phones: the sidebar, roster and rail are hidden (modal.css), so nothing of this shows; keep the drawer inside the viewport anyway */
+@media (max-width: 760px) { .amb-side { display: none; } .amb-peek { right: 12px; left: 12px; width: auto; bottom: 72px; } }
+button.amb-srv { border: 0; padding: 0; font: inherit; font-weight: 700; }
+button.amb-srv:focus-visible, .amb-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.amb-more { border: 1px dashed var(--bg-hover); }
+.amb-more-list .amb-ch { width: calc(100% - 16px); min-height: 40px; }
+@media (min-width: 761px) { .amb-more { display: none; } }

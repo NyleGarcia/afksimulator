@@ -10,8 +10,43 @@
   var C = (window.AFK_CONTENT && typeof window.AFK_CONTENT === 'object') ? window.AFK_CONTENT : {};
   var MODES = ['afk-timeout', 'no-timeout'];
   var ROLES = ['friend', 'resident', 'bot'];
-  var EFFECTS = { susMult: 'mult', pointMult: 'mult', micEventChance: 'mult', excuseBonus: 'add', graceMins: 'add' };
-  var CONTENT_VERSION = 4;
+  // The ONE effects vocabulary (rogue_spec section 3). kind: mult | add | min | charges. single = bounds one source may declare;
+  // C / R = total clamp after combining, for classic / rogue. effects.js combines + clamps; items, boons, relics and curses all use it.
+  var D = function (kind, single, C, R, int) { return { kind: kind, single: single, C: C, R: R, int: !!int }; };
+  var CH = function (s, C, R) { return D('charges', s, C, R, true); };
+  var EFFECT_DEFS = {
+    susMult: D('mult', [0.5, 2], [0.55, 2], [0.4, 2.5]),
+    susFlatPerRound: D('add', [-10, 10], [-15, 15], [-20, 20]),
+    pointMult: D('mult', [0.5, 1.5], [0.6, 2], [0.6, 3]),
+    pointFlatPerMin: D('add', [0, 4], [0, 10], [0, 14]),
+    comboKeep: CH([1, 2], [0, 3], [0, 4]),
+    comboStartBonus: D('add', [0, 1], [0, 1], [0, 2], true),
+    secondWind: CH([1, 2], [0, 3], [0, 4]),
+    secondWindSus: D('min', [25, 70], [25, 70], [25, 70]),
+    excuseReroll: CH([1, 2], [0, 4], [0, 6]),
+    excuseBonus: D('add', [-10, 25], [0, 60], [0, 80]),
+    pingShield: CH([1, 3], [0, 6], [0, 10]),
+    triageTime: D('mult', [0.6, 1.5], [0.7, 2], [0.6, 2.2]),
+    micEventChance: D('mult', [0.1, 3], [0.1, 3], [0.1, 3]),
+    clipBonusMult: D('mult', [1, 3], [1, 3], [1, 3]),
+    graceMins: D('add', [-3, 6], [0, 12], [0, 14]),
+    dragChanceMult: D('mult', [0.4, 3], [0.25, 3], [0.25, 3]),
+    lieBonusMult: D('mult', [1, 2.5], [0.5, 3], [0.5, 3.5]),
+    tokenMult: D('mult', [1, 1.5], [1, 2], [1, 2]),
+    goldMult: D('mult', [1, 2], [1, 2], [1, 2.5]),
+    startSus: D('add', [0, 30], [0, 40], [0, 40]),
+    susCap: D('add', [0, 20], [0, 30], [0, 40]),
+    abFakeInternet: CH([1, 2], [0, 3], [0, 4]),
+    abMuteHammer: CH([1, 2], [0, 3], [0, 4]),
+    abDecoy: CH([1, 2], [0, 3], [0, 4]),
+    abPingBomb: CH([1, 2], [0, 3], [0, 4])
+  };
+  var CATEGORIES = ['gear', 'excuses', 'opsec', 'hustle', 'gadgets', 'gambles'];
+  var TIERS = ['permanent', 'run', 'consumable'];
+  var RARITIES = ['common', 'rare', 'legendary'];
+  var KNOWN_TOKENS = { me: 1, p: 1, t: 1, friend: 1 };
+  var TRAITS = ['roaster', 'hype', 'chill', 'rival', 'chaotic'];
+  var CONTENT_VERSION = 5;
   var warnings = [];
   var ctx = ''; // set to '[pack-id] ' while a pack is being validated
 
@@ -53,11 +88,23 @@
     return out;
   }
 
+  // warn (never drop) when a hand-written line uses a {token} the game does not fill. Pack text uses generator slots, so it is skipped.
+  var TOKEN_FIND = /\{([A-Za-z_]\w*)(?::[^{}]*)?\}/g;
+  function lintTokens(kind, id, field, text) {
+    if (ctx || typeof text !== 'string') return;
+    var m;
+    TOKEN_FIND.lastIndex = 0;
+    while ((m = TOKEN_FIND.exec(text))) {
+      if (!Object.prototype.hasOwnProperty.call(KNOWN_TOKENS, m[1])) warn(kind, id, field, 'unknown token {' + m[1] + '} (known: ' + Object.keys(KNOWN_TOKENS).map(function (x) { return '{' + x + '}'; }).join(' ') + '); it will be stripped');
+    }
+  }
+
   // ---------- characters ----------
   function dig(kind, cid, d, i) {
     var where = cid + '.digs[' + i + ']';
     if (!isObj(d) || !isStr(d.text)) { warn(kind, where, 'text', 'missing or not text; dig skipped'); return null; }
     var out = { text: d.text.trim(), when: {} };
+    lintTokens(kind, where, 'text', out.text);
     var w = d.when;
     if (w == null) return out;
     if (!isObj(w)) { warn(kind, where, 'when', 'must be an object; conditions ignored'); return out; }
@@ -100,9 +147,9 @@
     if (e.lines != null) {
       if (!isObj(e.lines)) warn(k, id, 'lines', 'must be an object of arrays; ignored');
       else Object.keys(e.lines).forEach(function (key) {
-        if (!/^[a-zA-Z]{1,24}$/.test(key) || BAD_KEY.test(key)) { warn(k, id, 'lines.' + key, 'bad key; ignored'); return; }
+        if (!(/^[a-zA-Z]{1,24}$/.test(key) || /^gn_(impressed|neutral|exasperated|detective|flake)$/.test(key)) || BAD_KEY.test(key)) { warn(k, id, 'lines.' + key, 'bad key; ignored'); return; }
         var arr = strList(k, id, 'lines.' + key, e.lines[key]);
-        if (arr && arr.length) out.lines[key] = arr;
+        if (arr && arr.length) { if (key.indexOf('gn_') !== 0) arr.forEach(function (x) { lintTokens(k, id, 'lines.' + key, x); }); out.lines[key] = arr; }
       });
     }
     if (e.digs != null) {
@@ -191,35 +238,484 @@
   }
 
   // ---------- items ----------
+  // validate an effects object against EFFECT_DEFS (single-source bounds). Returns the clean object ({} when nothing is left).
+  function effectsObj(k, id, raw, field) {
+    var fx = {};
+    Object.keys(raw).forEach(function (f) {
+      var v = raw[f];
+      var w = field + '.' + f;
+      if (BAD_KEY.test(f) || !Object.prototype.hasOwnProperty.call(EFFECT_DEFS, f)) { warn(k, id, w, 'unknown effect (use ' + Object.keys(EFFECT_DEFS).join(', ') + '); ignored'); return; }
+      var def = EFFECT_DEFS[f];
+      if (!isNum(v)) { warn(k, id, w, 'must be a number; ignored'); return; }
+      if (def.int && Math.floor(v) !== v) { warn(k, id, w, 'must be a whole number; ignored'); return; }
+      if (v < def.single[0] || v > def.single[1]) { warn(k, id, w, 'must be between ' + def.single[0] + ' and ' + def.single[1] + '; ignored'); return; }
+      fx[f] = v;
+    });
+    return fx;
+  }
+
   function item(e, id) {
     var k = 'item';
     if (!isStr(e.name, 40)) { warn(k, id, 'name', 'missing or not text; skipped'); return null; }
     if (!isNum(e.price) || e.price < 0 || e.price > 9999 || Math.floor(e.price) !== e.price) { warn(k, id, 'price', 'must be a whole number 0-9999; skipped'); return null; }
     if (!isObj(e.effects)) { warn(k, id, 'effects', 'missing or not an object; skipped'); return null; }
-    var fx = {};
-    Object.keys(e.effects).forEach(function (f) {
-      var v = e.effects[f];
-      if (!Object.prototype.hasOwnProperty.call(EFFECTS, f)) { warn(k, id, 'effects.' + f, 'unknown effect (use ' + Object.keys(EFFECTS).join(', ') + '); ignored'); return; }
-      if (!isNum(v)) { warn(k, id, 'effects.' + f, 'must be a number; ignored'); return; }
-      if (EFFECTS[f] === 'mult' && (v <= 0 || v > 10)) { warn(k, id, 'effects.' + f, 'multiplier must be above 0 and at most 10; ignored'); return; }
-      if (EFFECTS[f] === 'add' && Math.abs(v) > 1000) { warn(k, id, 'effects.' + f, 'must be between -1000 and 1000; ignored'); return; }
-      if (f === 'graceMins' && v < 0) { warn(k, id, 'effects.' + f, 'must be >= 0; ignored'); return; }
-      fx[f] = v;
-    });
+    var fx = effectsObj(k, id, e.effects, 'effects');
     if (!Object.keys(fx).length) { warn(k, id, 'effects', 'no valid effects left; skipped'); return null; }
-    var out = { id: id, icon: '📦', name: e.name.trim(), desc: '', price: e.price, effects: fx, stackable: false, max: 1, consumable: false };
+    var out = { id: id, icon: '📦', name: e.name.trim(), desc: '', price: e.price, effects: fx, stackable: false, max: 1, consumable: false, category: 'gear', tier: 'permanent', rarity: 'common', tags: [] };
     if (e.icon != null) { if (isStr(e.icon, 8)) out.icon = e.icon.trim(); else warn(k, id, 'icon', 'must be short text (an emoji); using default'); }
     if (e.desc != null) { if (isStr(e.desc, 200)) out.desc = e.desc.trim(); else warn(k, id, 'desc', 'must be text under 200 chars; ignored'); }
     ['stackable', 'consumable'].forEach(function (f) {
       if (e[f] == null) return;
       if (typeof e[f] === 'boolean') out[f] = e[f]; else warn(k, id, f, 'must be true or false; ignored');
     });
+    // tier: permanent | run | consumable. The legacy flag consumable:true means tier "run" (used up when a run starts, lasts the run)
+    if (out.consumable) out.tier = 'run';
+    if (e.tier != null) {
+      if (TIERS.indexOf(e.tier) >= 0) { if (out.consumable && e.tier === 'permanent') warn(k, id, 'consumable', 'conflicts with tier "permanent"; tier wins'); out.tier = e.tier; }
+      else warn(k, id, 'tier', 'must be ' + TIERS.join(', ') + '; using ' + out.tier);
+    }
+    out.consumable = out.tier !== 'permanent';
+    if (e.category != null) { if (CATEGORIES.indexOf(e.category) >= 0) out.category = e.category; else warn(k, id, 'category', 'must be ' + CATEGORIES.join(', ') + '; using gear'); }
+    if (e.rarity != null) { if (RARITIES.indexOf(e.rarity) >= 0) out.rarity = e.rarity; else warn(k, id, 'rarity', 'must be ' + RARITIES.join(', ') + '; using common'); }
+    if (e.tags != null) {
+      if (!Array.isArray(e.tags)) warn(k, id, 'tags', 'must be an array; ignored');
+      else {
+        var tg = e.tags.filter(function (x) { return typeof x === 'string' && /^[a-z-]{1,16}$/.test(x); });
+        if (tg.length !== e.tags.length) warn(k, id, 'tags', 'tags must be lowercase letters or - (max 16 chars); bad ones dropped');
+        out.tags = tg.slice(0, 6);
+      }
+    }
     if (out.stackable) out.max = 5;
     if (e.max != null) {
       if (isNum(e.max) && e.max >= 1 && e.max <= 99 && Math.floor(e.max) === e.max) { if (out.stackable) out.max = e.max; else warn(k, id, 'max', 'only used when stackable is true; ignored'); }
       else warn(k, id, 'max', 'must be a whole number 1-99; ignored');
     }
     return out;
+  }
+
+  // ---------- roster traits (content/roster-traits.js -> AFK_CONTENT.roster) ----------
+  function rosterContent(raw) {
+    var out = { palette: [], traits: {} };
+    if (raw == null) return out;
+    if (!isObj(raw)) { warn('roster', '*', '', 'must be an object { palette, traits }; ignored'); return out; }
+    if (raw.palette != null) {
+      if (!Array.isArray(raw.palette)) warn('roster', 'palette', '', 'must be an array of #hex colors; ignored');
+      else out.palette = raw.palette.filter(function (c) { return isColor(c); }).slice(0, 24);
+      if (Array.isArray(raw.palette) && out.palette.length !== raw.palette.length) warn('roster', 'palette', '', 'bad color(s) dropped');
+      if (out.palette.length && out.palette.length < 4) { warn('roster', 'palette', '', 'needs at least 4 colors; using the built-in palette'); out.palette = []; }
+    }
+    if (raw.traits != null) {
+      if (!isObj(raw.traits)) warn('roster', 'traits', '', 'must be an object; ignored');
+      else Object.keys(raw.traits).forEach(function (tid) {
+        if (TRAITS.indexOf(tid) < 0) { warn('roster', tid, '', 'unknown trait (use ' + TRAITS.join(', ') + '); skipped'); return; }
+        var t = raw.traits[tid];
+        if (!isObj(t)) { warn('roster', tid, '', 'not an object; skipped'); return; }
+        var o = { tags: [], digRate: null, lines: {}, digs: [], quiet: false, wildcard: false };
+        if (t.tags != null) { var tg = strList('roster', tid, 'tags', t.tags, 40); if (tg) o.tags = tg.slice(0, 6); }
+        if (t.digRate != null) { if (isNum(t.digRate) && t.digRate >= 0 && t.digRate <= 1) o.digRate = t.digRate; else warn('roster', tid, 'digRate', 'must be a number 0-1; ignored'); }
+        ['quiet', 'wildcard'].forEach(function (f) {
+          if (t[f] == null) return;
+          if (typeof t[f] === 'boolean') o[f] = t[f]; else warn('roster', tid, f, 'must be true or false; ignored');
+        });
+        if (t.lines != null) {
+          if (!isObj(t.lines)) warn('roster', tid, 'lines', 'must be an object of arrays; ignored');
+          else Object.keys(t.lines).forEach(function (key) {
+            if (!/^[a-zA-Z]{1,24}$/.test(key) || BAD_KEY.test(key)) { warn('roster', tid, 'lines.' + key, 'bad key; ignored'); return; }
+            var arr = strList('roster', tid, 'lines.' + key, t.lines[key], 240);
+            if (arr && arr.length) { arr.forEach(function (x) { lintTokens('roster', tid, 'lines.' + key, x); }); o.lines[key] = arr; }
+          });
+        }
+        if (t.digs != null) {
+          if (!Array.isArray(t.digs)) warn('roster', tid, 'digs', 'must be an array; ignored');
+          else t.digs.forEach(function (d, i) { var c = dig('roster', tid, d, i); if (c) { lintTokens('roster', tid + '.digs[' + i + ']', 'text', c.text); o.digs.push(c); } });
+        }
+        out.traits[tid] = o;
+      });
+    }
+    return out;
+  }
+
+
+  // ---------- rogue mode content (content/rogue.js -> AFK_CONTENT.rogue; packs: AFK_PACKS[id].rogue) ----------
+  var BUDGETS = { common: { pm: 1.10, sm: 0.93, ch: 1 }, rare: { pm: 1.20, sm: 0.85, ch: 2 }, legendary: { pm: 1.40, sm: 0.75, ch: 3 } };
+  var PRESENT = ['name', 'icon', 'desc', 'intro', 'text', 'title', 'label', 'lines'];
+  var TAG_RE = /^[a-z-]{1,16}$/;
+  var BOSS_RULES = { modeLock: 'mode', graceZero: 'bool', pingRateMult: [0.5, 4], susMultRound: [0.5, 2], pointMultRound: [0.5, 2], dragChanceMult: [0.25, 3], micEventMult: [0.1, 3], blackout: 'blackout', mutedOff: 'bool', triageTimeMult: [0.5, 1.5], noDecay: 'bool', forceVc: 'id', excuseMult: [0.25, 1], kickVoteAt: [10, 100], pingShield: [0, 4] };
+  var ASC_RULES = { bossPingRateAdd: [0, 1], lorCapAdd: [0, 1], altsStart: [1, 3], bossObjectiveMult: [1, 2], elitesPerAct: [1, 2], graceCap: [0, 14], startCurse: 'bool' };
+  var OUT_DURATIONS = ['run', 'act'];
+
+  // rarity budget (loader-enforced, so pack authors cannot break balance). Returns true when the effects fit.
+  function budgetOk(k, id, fx, rarity) {
+    var b = BUDGETS[rarity];
+    if (!b) return true;
+    if ((fx.pointMult || 1) > b.pm + 1e-9) { warn(k, id, 'effects.pointMult', 'over the ' + rarity + ' budget (max ' + b.pm + '); skipped'); return false; }
+    if ((fx.susMult || 1) < 1 && fx.susMult < b.sm - 1e-9) { warn(k, id, 'effects.susMult', 'over the ' + rarity + ' budget (min ' + b.sm + '); skipped'); return false; }
+    var bad = Object.keys(fx).filter(function (f) { return EFFECT_DEFS[f] && EFFECT_DEFS[f].kind === 'charges' && fx[f] > b.ch; });
+    if (bad.length) { warn(k, id, 'effects.' + bad[0], 'over the ' + rarity + ' budget (max ' + b.ch + ' charge' + (b.ch > 1 ? 's' : '') + ' per effect); skipped'); return false; }
+    return true;
+  }
+  function tagList(k, id, v) {
+    if (v == null) return [];
+    if (!Array.isArray(v)) { warn(k, id, 'tags', 'must be an array; ignored'); return []; }
+    var t = v.filter(function (x) { return typeof x === 'string' && TAG_RE.test(x); });
+    if (t.length !== v.length) warn(k, id, 'tags', 'tags must be lowercase letters or - (max 16 chars); bad ones dropped');
+    return t.slice(0, 6);
+  }
+  function numIn(v, lo, hi) { return isNum(v) && v >= lo && v <= hi; }
+  function instantObj(k, id, raw, field) {
+    var o = {};
+    if (raw == null) return o;
+    if (!isObj(raw)) { warn(k, id, field, 'must be an object { gold, sus, alts }; ignored'); return o; }
+    [['gold', -200, 500], ['sus', -100, 100], ['alts', -3, 3]].forEach(function (d) {
+      if (raw[d[0]] == null) return;
+      if (numIn(raw[d[0]], d[1], d[2]) && Math.floor(raw[d[0]]) === raw[d[0]]) o[d[0]] = raw[d[0]]; else warn(k, id, field + '.' + d[0], 'must be a whole number ' + d[1] + '..' + d[2] + '; ignored');
+    });
+    return o;
+  }
+  function unlockObj(k, id, raw) {
+    var o = { tokens: 0 };
+    if (raw == null) return o;
+    if (!isObj(raw)) { warn(k, id, 'unlock', 'must be { tokens }; free'); return o; }
+    if (raw.tokens != null) { if (numIn(raw.tokens, 0, 999) && Math.floor(raw.tokens) === raw.tokens) o.tokens = raw.tokens; else warn(k, id, 'unlock.tokens', 'must be a whole number 0-999; free'); }
+    if (raw.ascMax != null) { if (numIn(raw.ascMax, 0, 5) && Math.floor(raw.ascMax) === raw.ascMax) o.ascMax = raw.ascMax; else warn(k, id, 'unlock.ascMax', 'must be 0-5; ignored'); }
+    return o;
+  }
+  function actsList(k, id, v) {
+    if (v == null) return [1, 2, 3];
+    var a = Array.isArray(v) ? v.filter(function (x) { return x === 1 || x === 2 || x === 3; }) : [];
+    if (!a.length) { warn(k, id, 'acts', 'must be a list of 1, 2, 3; using all acts'); return [1, 2, 3]; }
+    return a;
+  }
+  function textOf(k, id, e, field, max, out, def) {
+    if (e[field] == null) { if (def != null) out[field] = def; return true; }
+    if (isStr(e[field], max)) { out[field] = e[field].trim(); lintTokens(k, id, field, out[field]); return true; }
+    warn(k, id, field, 'must be text under ' + max + ' chars; ignored');
+    if (def != null) out[field] = def;
+    return false;
+  }
+
+  function rBoon(e, id, isRelic) {
+    var k = isRelic ? 'relic' : 'boon';
+    if (!isStr(e.name, 40)) { warn(k, id, 'name', 'missing or not text; skipped'); return null; }
+    var rarity = isRelic ? 'relic' : e.rarity;
+    if (!isRelic && RARITIES.indexOf(rarity) < 0) { warn(k, id, 'rarity', 'must be ' + RARITIES.join(', ') + '; skipped'); return null; }
+    if (!isObj(e.effects)) { warn(k, id, 'effects', 'missing or not an object; skipped'); return null; }
+    var fx = effectsObj(k, id, e.effects, 'effects');
+    var out = { id: id, name: e.name.trim(), icon: '✨', rarity: rarity, tags: tagList(k, id, e.tags), desc: '', effects: fx, instant: instantObj(k, id, e.instant, 'instant'), max: 1, weight: 1, acts: actsList(k, id, e.acts), unlock: unlockObj(k, id, e.unlock) };
+    if (!Object.keys(fx).length && !(out.instant.gold || out.instant.sus || out.instant.alts)) { warn(k, id, 'effects', 'no valid effects left; skipped'); return null; }
+    if (!budgetOk(k, id, fx, isRelic ? 'legendary' : rarity)) return null;
+    if (e.icon != null) { if (isStr(e.icon, 8)) out.icon = e.icon.trim(); else warn(k, id, 'icon', 'must be short text (an emoji); using default'); }
+    textOf(k, id, e, 'desc', 200, out, '');
+    if (!isRelic) {
+      if (e.max != null) { if (numIn(e.max, 1, 5) && Math.floor(e.max) === e.max) out.max = e.max; else warn(k, id, 'max', 'must be a whole number 1-5; using 1'); }
+      if (e.weight != null) { if (numIn(e.weight, 0.1, 10)) out.weight = e.weight; else warn(k, id, 'weight', 'must be a number 0.1-10; using 1'); }
+      if (e.requires != null) {
+        var rq = e.requires;
+        if (isObj(rq) && typeof rq.tag === 'string' && TAG_RE.test(rq.tag) && numIn(rq.count, 1, 9)) out.requires = { tag: rq.tag, count: Math.floor(rq.count) };
+        else warn(k, id, 'requires', 'must be { tag, count }; ignored');
+      }
+    }
+    if (e.when != null) {
+      if (isObj(e.when) && ['boss', 'elite', 'normal'].indexOf(e.when.roundType) >= 0) out.when = { roundType: e.when.roundType };
+      else warn(k, id, 'when', 'must be { roundType: "boss" | "elite" | "normal" }; ignored');
+    }
+    return out;
+  }
+
+  function rCurse(e, id) {
+    var k = 'curse';
+    if (!isStr(e.name, 40)) { warn(k, id, 'name', 'missing or not text; skipped'); return null; }
+    if (!isObj(e.effects)) { warn(k, id, 'effects', 'missing or not an object; skipped'); return null; }
+    var fx = effectsObj(k, id, e.effects, 'effects');
+    if (!Object.keys(fx).length) { warn(k, id, 'effects', 'no valid effects left; skipped'); return null; }
+    var out = { id: id, name: e.name.trim(), icon: '☠️', desc: '', effects: fx, duration: 'act', payout: {} };
+    if (e.icon != null) { if (isStr(e.icon, 8)) out.icon = e.icon.trim(); else warn(k, id, 'icon', 'must be short text (an emoji); using default'); }
+    textOf(k, id, e, 'desc', 200, out, '');
+    if (e.duration != null) { if (['round', 'act', 'run'].indexOf(e.duration) >= 0) out.duration = e.duration; else warn(k, id, 'duration', 'must be round, act or run; using act'); }
+    if (e.shopPriceMult != null) { if (numIn(e.shopPriceMult, 1, 2)) out.shopPriceMult = e.shopPriceMult; else warn(k, id, 'shopPriceMult', 'must be 1-2; ignored'); }
+    var p = e.payout;
+    if (p != null) {
+      if (!isObj(p)) warn(k, id, 'payout', 'must be an object; ignored');
+      else {
+        if (p.gold != null) { if (numIn(p.gold, 0, 200)) out.payout.gold = Math.floor(p.gold); else warn(k, id, 'payout.gold', 'must be 0-200; ignored'); }
+        if (p.boonRarity != null) { if (RARITIES.indexOf(p.boonRarity) >= 0) out.payout.boonRarity = p.boonRarity; else warn(k, id, 'payout.boonRarity', 'must be ' + RARITIES.join(', ') + '; ignored'); }
+        if (p.boonChance != null) { if (numIn(p.boonChance, 0, 1)) out.payout.boonChance = p.boonChance; else warn(k, id, 'payout.boonChance', 'must be 0-1; ignored'); }
+        if (p.relicReroll != null) { if (numIn(p.relicReroll, 0, 3)) out.payout.relicReroll = Math.floor(p.relicReroll); else warn(k, id, 'payout.relicReroll', 'must be 0-3; ignored'); }
+        if (p.alts != null) { if (numIn(p.alts, 0, 2)) out.payout.alts = Math.floor(p.alts); else warn(k, id, 'payout.alts', 'must be 0-2; ignored'); }
+        if (p.effects != null) {
+          if (isObj(p.effects)) {
+            var pf = effectsObj(k, id, p.effects, 'payout.effects');
+            if (Object.keys(pf).length) { out.payout.effects = pf; out.payout.effectsDuration = p.effectsDuration === 'run' ? 'run' : 'act'; }
+          } else warn(k, id, 'payout.effects', 'must be an object; ignored');
+        }
+      }
+    }
+    return out;
+  }
+
+  function rEvent(e, id) {
+    var k = 'event';
+    if (!isStr(e.title, 60)) { warn(k, id, 'title', 'missing or not text; skipped'); return null; }
+    if (!isStr(e.text, 300)) { warn(k, id, 'text', 'missing or not text; skipped'); return null; }
+    var out = { id: id, title: e.title.trim(), icon: '❓', acts: actsList(k, id, e.acts), weight: 1, text: e.text.trim(), choices: [] };
+    lintTokens(k, id, 'text', out.text);
+    if (e.icon != null) { if (isStr(e.icon, 8)) out.icon = e.icon.trim(); else warn(k, id, 'icon', 'must be short text (an emoji); using default'); }
+    if (e.weight != null) { if (numIn(e.weight, 0.1, 10)) out.weight = e.weight; else warn(k, id, 'weight', 'must be a number 0.1-10; using 1'); }
+    if (!Array.isArray(e.choices)) { warn(k, id, 'choices', 'missing; skipped'); return null; }
+    e.choices.slice(0, 4).forEach(function (c, ci) {
+      var w = 'choices[' + ci + ']';
+      if (!isObj(c) || !isStr(c.label, 60) || !Array.isArray(c.outcomes)) { warn(k, id, w, 'needs label and outcomes; choice skipped'); return; }
+      var ch = { label: c.label.trim(), hint: '', outcomes: [] };
+      if (c.hint != null) { if (isStr(c.hint, 60)) ch.hint = c.hint.trim(); else warn(k, id, w + '.hint', 'must be short text; ignored'); }
+      ['cost', 'requires'].forEach(function (f) {
+        if (c[f] == null) return;
+        if (!isObj(c[f])) { warn(k, id, w + '.' + f, 'must be an object; ignored'); return; }
+        var o = {};
+        Object.keys(c[f]).forEach(function (x) {
+          if (['gold', 'alts', 'goldMin'].indexOf(x) >= 0 && numIn(c[f][x], 0, 500)) o[x] = Math.floor(c[f][x]);
+          else if (x === 'flag' && typeof c[f][x] === 'string' && /^[a-z0-9_-]{1,24}$/i.test(c[f][x])) o.flag = c[f][x];
+          else warn(k, id, w + '.' + f + '.' + x, 'unknown or out of range; ignored');
+        });
+        ch[f] = o;
+      });
+      c.outcomes.slice(0, 4).forEach(function (oc, oi) {
+        var ow = w + '.outcomes[' + oi + ']';
+        if (!isObj(oc) || !isStr(oc.text, 240) || !numIn(oc.w, 0.01, 100)) { warn(k, id, ow, 'needs text and a weight w; outcome skipped'); return; }
+        var o = { w: oc.w, text: oc.text.trim(), instant: instantObj(k, id, oc.instant, ow + '.instant') };
+        lintTokens(k, id, ow + '.text', o.text);
+        if (oc.giveBoon != null) {
+          var gb = oc.giveBoon;
+          if (isObj(gb) && isId(gb.id)) o.giveBoon = { id: gb.id };
+          else if (isObj(gb) && RARITIES.indexOf(gb.rarity) >= 0) { o.giveBoon = { rarity: gb.rarity }; if (gb.tag != null && typeof gb.tag === 'string' && TAG_RE.test(gb.tag)) o.giveBoon.tag = gb.tag; }
+          else warn(k, id, ow + '.giveBoon', 'must be { id } or { rarity, tag? }; ignored');
+        }
+        if (oc.giveCurse != null) { if (isId(oc.giveCurse)) o.giveCurse = oc.giveCurse; else warn(k, id, ow + '.giveCurse', 'must be a curse id; ignored'); }
+        if (oc.giveRelic != null) { if (oc.giveRelic === true) o.giveRelic = true; else warn(k, id, ow + '.giveRelic', 'must be true; ignored'); }
+        if (oc.effects != null) {
+          if (isObj(oc.effects)) {
+            var ef = effectsObj(k, id, oc.effects, ow + '.effects');
+            if (Object.keys(ef).length) { o.effects = ef; o.effectsDuration = OUT_DURATIONS.indexOf(oc.effectsDuration) >= 0 ? oc.effectsDuration : 'run'; }
+          } else warn(k, id, ow + '.effects', 'must be an object; ignored');
+        }
+        if (oc.flag != null) { if (typeof oc.flag === 'string' && /^[a-z0-9_-]{1,24}$/i.test(oc.flag)) o.flag = oc.flag; else warn(k, id, ow + '.flag', 'must be a short id; ignored'); }
+        ch.outcomes.push(o);
+      });
+      if (!ch.outcomes.length) { warn(k, id, w, 'no valid outcomes; choice skipped'); return; }
+      out.choices.push(ch);
+    });
+    if (out.choices.length < 2) { warn(k, id, 'choices', 'needs at least 2 valid choices; skipped'); return null; }
+    return out;
+  }
+
+  function rBoss(e, id) {
+    var k = 'boss';
+    if (!isStr(e.name, 40)) { warn(k, id, 'name', 'missing or not text; skipped'); return null; }
+    if (!(e.act === 1 || e.act === 2 || e.act === 3)) { warn(k, id, 'act', 'must be 1, 2 or 3; skipped'); return null; }
+    if (!isObj(e.objective) || !numIn(e.objective.minMins, 5, 240)) { warn(k, id, 'objective.minMins', 'must be a number 5-240; skipped'); return null; }
+    var out = { id: id, name: e.name.trim(), icon: '👹', act: e.act, objective: { minMins: e.objective.minMins }, promise: { p: 15, m: 1 }, reward: { gold: [100, 160, 260][e.act - 1] }, rules: {}, intro: [], midFight: [], win: [], fail: [] };
+    if (e.icon != null) { if (isStr(e.icon, 8)) out.icon = e.icon.trim(); else warn(k, id, 'icon', 'must be short text (an emoji); using default'); }
+    if (isObj(e.promise) && numIn(e.promise.p, 1, 120) && numIn(e.promise.m, 0.5, 2)) out.promise = { p: Math.floor(e.promise.p), m: e.promise.m };
+    else warn(k, id, 'promise', 'must be { p, m }; using 15 min x1');
+    if (e.reward != null) { if (isObj(e.reward) && numIn(e.reward.gold, 0, 600)) out.reward = { gold: Math.floor(e.reward.gold) }; else warn(k, id, 'reward', 'must be { gold }; using default'); }
+    var r = isObj(e.rules) ? e.rules : {};
+    if (e.rules != null && !isObj(e.rules)) warn(k, id, 'rules', 'must be an object; ignored');
+    Object.keys(r).forEach(function (rk) {
+      var d = BOSS_RULES[rk], v = r[rk], w = 'rules.' + rk;
+      if (BAD_KEY.test(rk) || !Object.prototype.hasOwnProperty.call(BOSS_RULES, rk)) { warn(k, id, w, 'unknown rule (use ' + Object.keys(BOSS_RULES).join(', ') + '); ignored'); return; }
+      if (d === 'mode') { if (MODES.indexOf(v) >= 0) out.rules[rk] = v; else warn(k, id, w, 'must be ' + MODES.join(' or ') + '; ignored'); }
+      else if (d === 'bool') { if (typeof v === 'boolean') out.rules[rk] = v; else warn(k, id, w, 'must be true or false; ignored'); }
+      else if (d === 'id') { if (isId(v)) out.rules[rk] = v; else warn(k, id, w, 'must be a channel id; ignored'); }
+      else if (d === 'blackout') {
+        if (isObj(v) && Array.isArray(v.at) && v.at.length === 2 && numIn(v.at[0], 0, 240) && numIn(v.at[1], v.at[0], 240) && Array.isArray(v.dur) && v.dur.length === 2 && numIn(v.dur[0], 1, 60) && numIn(v.dur[1], v.dur[0], 60) && numIn(v.susMult, 0.1, 2)) out.rules[rk] = { at: [v.at[0], v.at[1]], dur: [v.dur[0], v.dur[1]], susMult: v.susMult };
+        else warn(k, id, w, 'must be { at:[a,b], dur:[c,d], susMult }; ignored');
+      } else if (numIn(v, d[0], d[1])) out.rules[rk] = rk === 'pingShield' || rk === 'kickVoteAt' ? Math.floor(v) : v;
+      else warn(k, id, w, 'must be a number between ' + d[0] + ' and ' + d[1] + '; ignored');
+    });
+    // presentation: pack overrides use lines:{midFight,win,fail}; base bosses list them at the top level
+    var src = isObj(e.lines) ? e.lines : e;
+    ['intro', 'midFight', 'win', 'fail'].forEach(function (f) {
+      var v = f === 'intro' ? e.intro : src[f];
+      if (v == null) return;
+      var a = strList(k, id, f, v, 240);
+      if (a) { a.forEach(function (x) { lintTokens(k, id, f, x); }); out[f] = a.slice(0, 12); }
+    });
+    return out;
+  }
+
+  function rLoadout(e, id) {
+    var k = 'loadout';
+    if (!isStr(e.name, 30)) { warn(k, id, 'name', 'missing or not text; skipped'); return null; }
+    var out = { id: id, name: e.name.trim(), icon: '🎒', desc: '', unlock: unlockObj(k, id, e.unlock), effects: {}, alts: 2, gold: 0, rerolls: 1, boons: [], curses: [], offerCards: 3 };
+    if (e.icon != null) { if (isStr(e.icon, 8)) out.icon = e.icon.trim(); else warn(k, id, 'icon', 'must be short text (an emoji); using default'); }
+    textOf(k, id, e, 'desc', 240, out, '');
+    if (e.effects != null) { if (isObj(e.effects)) out.effects = effectsObj(k, id, e.effects, 'effects'); else warn(k, id, 'effects', 'must be an object; ignored'); }
+    [['alts', 1, 3], ['gold', 0, 100], ['rerolls', 0, 5], ['offerCards', 3, 4]].forEach(function (d) {
+      if (e[d[0]] == null) return;
+      if (numIn(e[d[0]], d[1], d[2]) && Math.floor(e[d[0]]) === e[d[0]]) out[d[0]] = e[d[0]]; else warn(k, id, d[0], 'must be a whole number ' + d[1] + '-' + d[2] + '; using ' + out[d[0]]);
+    });
+    ['boons', 'curses'].forEach(function (f) { if (e[f] != null) { var a = strList(k, id, f, e[f], 32); if (a) out[f] = a.filter(isId); } });
+    if (e.freeBoon != null) { if (isId(e.freeBoon)) out.freeBoon = e.freeBoon; else warn(k, id, 'freeBoon', 'must be a boon id; ignored'); }
+    return out;
+  }
+
+  function rSynergy(e, id) {
+    var k = 'synergy';
+    if (!isStr(e.name, 40)) { warn(k, id, 'name', 'missing or not text; skipped'); return null; }
+    if (typeof e.tag !== 'string' || !TAG_RE.test(e.tag)) { warn(k, id, 'tag', 'must be a tag; skipped'); return null; }
+    if (!numIn(e.count, 2, 9) || Math.floor(e.count) !== e.count) { warn(k, id, 'count', 'must be a whole number 2-9; skipped'); return null; }
+    var out = { id: id, name: e.name.trim(), tag: e.tag, count: e.count, effects: {}, instant: instantObj(k, id, e.instant, 'instant'), desc: '' };
+    if (e.effects != null) { if (isObj(e.effects)) out.effects = effectsObj(k, id, e.effects, 'effects'); else warn(k, id, 'effects', 'must be an object; ignored'); }
+    if (!Object.keys(out.effects).length && !(out.instant.gold || out.instant.sus || out.instant.alts)) { warn(k, id, 'effects', 'nothing to give; skipped'); return null; }
+    textOf(k, id, e, 'desc', 200, out, '');
+    return out;
+  }
+
+  function rAscensions(arr) {
+    var out = [];
+    if (arr == null) return out;
+    if (!Array.isArray(arr)) { warn('ascension', '*', '', 'must be an array; ignored'); return out; }
+    arr.forEach(function (e, i) {
+      var id = '#' + i;
+      if (!isObj(e) || !numIn(e.level, 1, 5) || Math.floor(e.level) !== e.level || e.level !== out.length + 1) { warn('ascension', id, 'level', 'levels must be 1, 2, 3... in order; skipped'); return; }
+      if (!isStr(e.name, 40)) { warn('ascension', id, 'name', 'missing; skipped'); return; }
+      var a = { level: e.level, name: e.name.trim(), desc: isStr(e.desc, 200) ? e.desc.trim() : '', effects: {}, rules: {}, scoreMult: 1 + 0.15 * e.level };
+      if (isObj(e.effects)) a.effects = effectsObj('ascension', id, e.effects, 'effects');
+      if (numIn(e.scoreMult, 1, 5)) a.scoreMult = e.scoreMult; else warn('ascension', id, 'scoreMult', 'must be 1-5; using ' + a.scoreMult);
+      if (isObj(e.rules)) Object.keys(e.rules).forEach(function (rk) {
+        var d = ASC_RULES[rk], v = e.rules[rk];
+        if (BAD_KEY.test(rk) || !Object.prototype.hasOwnProperty.call(ASC_RULES, rk)) { warn('ascension', id, 'rules.' + rk, 'unknown rule; ignored'); return; }
+        if (d === 'bool') { if (typeof v === 'boolean') a.rules[rk] = v; }
+        else if (numIn(v, d[0], d[1])) a.rules[rk] = v; else warn('ascension', id, 'rules.' + rk, 'must be ' + d[0] + '..' + d[1] + '; ignored');
+      });
+      out.push(a);
+    });
+    return out;
+  }
+
+  function rFlavor(raw) {
+    var f = { actNames: ['Act 1', 'Act 2', 'Act 3'], runName: 'Rogue Run', bossLabel: 'BOSS', eliteLabel: 'ELITE', bossIntro: {} };
+    if (raw == null) return f;
+    if (!isObj(raw)) { warn('flavor', '*', '', 'must be an object; ignored'); return f; }
+    if (raw.actNames != null) { var an = strList('flavor', 'actNames', '', raw.actNames, 30); if (an && an.length === 3) f.actNames = an; else warn('flavor', 'actNames', '', 'needs exactly 3 names; using defaults'); }
+    ['runName', 'bossLabel', 'eliteLabel'].forEach(function (x) { if (raw[x] != null) { if (isStr(raw[x], 30)) f[x] = raw[x].trim(); else warn('flavor', x, '', 'must be short text; ignored'); } });
+    if (isObj(raw.bossIntro)) Object.keys(raw.bossIntro).forEach(function (b) {
+      if (BAD_KEY.test(b)) return;
+      var a = strList('flavor', 'bossIntro.' + b, '', raw.bossIntro[b], 240);
+      if (a && a.length) { a.forEach(function (x) { lintTokens('flavor', 'bossIntro.' + b, '', x); }); f.bossIntro[b] = a; }
+    });
+    return f;
+  }
+
+  // validated rogue block: base (isPack false) or one pack (isPack true; colliding ids become presentation-only overrides)
+  function rogueContent(raw, isPack, baseIds) {
+    var out = { boons: [], relics: [], curses: [], events: [], bosses: [], loadouts: [], ascensions: [], synergies: [], flavor: null, disable: [], override: {}, present: true };
+    if (raw == null) { out.present = false; return out; }
+    if (!isObj(raw)) { warn('rogue', '*', '', 'must be an object; ignored'); out.present = false; return out; }
+    var ovr = {};
+    function ovrOf(kind) { return ovr[kind] || (ovr[kind] = {}); }
+    function takeList(kind, field, fn) {
+      var src = raw[field];
+      if (src == null) return [];
+      if (!Array.isArray(src)) { warn(kind, '*', '', 'must be an array; ignoring the whole list'); return []; }
+      if (isPack) {
+        var fresh = [];
+        src.forEach(function (e) {
+          if (isObj(e) && isId(e.id) && baseIds && baseIds[field] && baseIds[field][e.id]) {
+            var o = {}; PRESENT.forEach(function (f) { if (e[f] != null) o[f] = e[f]; });
+            if (e.effects != null || e.rules != null || e.rarity != null) warn(kind, e.id, 'effects', 'id collides with a base entry: treated as an override, only ' + PRESENT.join('/') + ' are read');
+            ovrOf(field)[e.id] = o;
+          } else fresh.push(e);
+        });
+        src = fresh;
+      }
+      return list(kind, src, fn);
+    }
+    out.boons = takeList('boon', 'boons', function (e, id) { return rBoon(e, id, false); });
+    out.relics = takeList('relic', 'relics', function (e, id) { return rBoon(e, id, true); });
+    out.curses = takeList('curse', 'curses', rCurse);
+    out.events = takeList('event', 'events', rEvent);
+    out.bosses = takeList('boss', 'bosses', rBoss);
+    out.loadouts = takeList('loadout', 'loadouts', rLoadout);
+    out.synergies = takeList('synergy', 'synergies', rSynergy);
+    out.ascensions = isPack ? [] : rAscensions(raw.ascensions);
+    out.flavor = rFlavor(raw.flavor);
+    if (isPack && raw.ascensions != null) warn('rogue', 'ascensions', '', 'packs cannot change ascensions; ignored');
+    if (raw.disable != null) { var d = strList('rogue', 'disable', '', raw.disable, 32); if (d) out.disable = d.filter(isId); }
+    if (isPack && isObj(raw.override)) {
+      ['boons', 'relics', 'curses', 'events', 'bosses', 'loadouts'].forEach(function (f) {
+        var a = raw.override[f];
+        if (a == null) return;
+        if (!Array.isArray(a)) { warn('rogue', 'override.' + f, '', 'must be an array; ignored'); return; }
+        a.forEach(function (e) {
+          if (!isObj(e) || !isId(e.id)) { warn('rogue', 'override.' + f, 'id', 'missing or invalid; skipped'); return; }
+          var o = {}; PRESENT.forEach(function (x) { if (e[x] != null) o[x] = e[x]; });
+          if (e.effects != null || e.rules != null || e.objective != null) warn('rogue', 'override.' + f + '.' + e.id, 'effects', 'only ' + PRESENT.join('/') + ' are read in an override; the rest is ignored');
+          ovrOf(f)[e.id] = o;
+        });
+      });
+    }
+    out.override = ovr;
+    return out;
+  }
+
+  function idMap(arr) { var m = {}; arr.forEach(function (x) { m[x.id] = x; }); return m; }
+
+  // base + pack -> the content the game plays with. Presentation overrides applied, disabled ids removed, dangling refs dropped.
+  function mergeRogue(base, pack) {
+    var M = { boons: [], relics: [], curses: [], events: [], bosses: [], loadouts: [], ascensions: base.ascensions.slice(), synergies: [], flavor: {}, runtime: true };
+    var dis = {};
+    (pack ? pack.disable : []).forEach(function (x) { dis[x] = true; });
+    base.disable.forEach(function (x) { dis[x] = true; });
+    function present(item, ov) {
+      var o = {}; Object.keys(item).forEach(function (k) { o[k] = item[k]; });
+      if (!ov) return o;
+      PRESENT.forEach(function (f) {
+        if (ov[f] == null) return;
+        if (f === 'lines') {
+          if (isObj(ov.lines)) ['midFight', 'win', 'fail'].forEach(function (x) { var a = strList('boss', item.id, 'lines.' + x, ov.lines[x], 240); if (a && a.length) o[x] = a.slice(0, 12); });
+        } else if (f === 'intro') { var a = strList('boss', item.id, 'intro', ov.intro, 240); if (a && a.length) o.intro = a.slice(0, 12); }
+        else if ((f === 'name' || f === 'title' || f === 'label') && isStr(ov[f], 60)) o[f] = ov[f].trim();
+        else if ((f === 'desc' || f === 'text') && isStr(ov[f], 300)) o[f] = ov[f].trim();
+        else if (f === 'icon' && isStr(ov.icon, 8)) o.icon = ov.icon.trim();
+      });
+      return o;
+    }
+    ['boons', 'relics', 'curses', 'events', 'bosses', 'loadouts'].forEach(function (f) {
+      var ov = (pack && pack.override[f]) || {};
+      var seen = {};
+      base[f].concat(pack ? pack[f] : []).forEach(function (it) {
+        if (dis[it.id] || seen[it.id]) return;
+        seen[it.id] = true;
+        M[f].push(present(it, ov[it.id]));
+      });
+    });
+    M.synergies = base.synergies.concat(pack ? pack.synergies : []);
+    M.flavor = { actNames: base.flavor.actNames.slice(), runName: base.flavor.runName, bossLabel: base.flavor.bossLabel, eliteLabel: base.flavor.eliteLabel, bossIntro: {} };
+    if (pack && pack.flavor) {
+      var pf = pack.flavor;
+      if (pf.actNames && pf.actNames.length === 3 && pf.actNames.join('') !== 'Act 1Act 2Act 3') M.flavor.actNames = pf.actNames.slice();
+      ['runName', 'bossLabel', 'eliteLabel'].forEach(function (x) { if (pf[x]) M.flavor[x] = pf[x]; });
+      M.flavor.bossIntro = pf.bossIntro || {};
+    }
+    // dangling references: warn once per merged set and drop the reference
+    var bn = idMap(M.boons), cn = idMap(M.curses);
+    M.events.forEach(function (ev) {
+      ev.choices = ev.choices.filter(function (c) {
+        c.outcomes = c.outcomes.filter(function (o) {
+          if (o.giveBoon && o.giveBoon.id && !bn[o.giveBoon.id]) { warn('event', ev.id, 'giveBoon', 'unknown boon id "' + o.giveBoon.id + '"; outcome dropped'); return false; }
+          if (o.giveCurse && !cn[o.giveCurse]) { warn('event', ev.id, 'giveCurse', 'unknown curse id "' + o.giveCurse + '"; outcome dropped'); return false; }
+          return true;
+        });
+        return c.outcomes.length > 0;
+      });
+    });
+    M.events = M.events.filter(function (ev) { return ev.choices.length >= 2; });
+    M.loadouts.forEach(function (l) {
+      l.boons = l.boons.filter(function (b) { if (!bn[b]) { warn('loadout', l.id, 'boons', 'unknown boon id "' + b + '"; dropped'); return false; } return true; });
+      l.curses = l.curses.filter(function (b) { if (!cn[b]) { warn('loadout', l.id, 'curses', 'unknown curse id "' + b + '"; dropped'); return false; } return true; });
+      if (l.freeBoon && !bn[l.freeBoon]) { warn('loadout', l.id, 'freeBoon', 'unknown boon id "' + l.freeBoon + '"; ignored'); delete l.freeBoon; }
+    });
+    return M;
   }
 
   // ---------- themes ----------
@@ -285,7 +781,7 @@
     Object.keys(obj).forEach(function (key) {
       if (BAD_KEY.test(key)) { warn(kind, key, '', 'reserved name; skipped'); return; }
       var arr = strList(kind, key, '', obj[key], 240);
-      if (arr && arr.length) out[key] = arr;
+      if (arr && arr.length) { if (kind === 'dialog') arr.forEach(function (x) { lintTokens('dialog', key, '', x); }); out[key] = arr; }
     });
     return out;
   }
@@ -297,13 +793,13 @@
     if (!isObj(d)) { warn('dialog', '*', '', 'must be an object { BRB, EXCUSES, LINES }; ignored'); return out; }
     if (Array.isArray(d.BRB)) {
       d.BRB.forEach(function (b, i) {
-        if (isObj(b) && isStr(b.t, 80) && isNum(b.p) && b.p > 0 && b.p <= 1440 && isNum(b.m) && b.m > 0 && b.m <= 10) out.BRB.push({ t: b.t, p: b.p, m: b.m });
+        if (isObj(b) && isStr(b.t, 80) && isNum(b.p) && b.p > 0 && b.p <= 1440 && isNum(b.m) && b.m > 0 && b.m <= 10) { lintTokens('dialog', 'BRB[' + i + ']', 't', b.t); out.BRB.push({ t: b.t, p: b.p, m: b.m }); }
         else warn('dialog', 'BRB[' + i + ']', 't/p/m', 'needs text t, promised minutes p (0-1440] and multiplier m (0-10]; skipped');
       });
     } else if (d.BRB != null) warn('dialog', 'BRB', '', 'must be an array; ignored');
     if (Array.isArray(d.EXCUSES)) {
       d.EXCUSES.forEach(function (x, i) {
-        if (isObj(x) && isStr(x.t, 80) && Array.isArray(x.r) && x.r.length === 2 && isNum(x.r[0]) && isNum(x.r[1]) && x.r[0] <= x.r[1]) out.EXCUSES.push({ t: x.t, r: [x.r[0], x.r[1]] });
+        if (isObj(x) && isStr(x.t, 80) && Array.isArray(x.r) && x.r.length === 2 && isNum(x.r[0]) && isNum(x.r[1]) && x.r[0] <= x.r[1]) { lintTokens('dialog', 'EXCUSES[' + i + ']', 't', x.t); out.EXCUSES.push({ t: x.t, r: [x.r[0], x.r[1]] }); }
         else warn('dialog', 'EXCUSES[' + i + ']', 't/r', 'needs text t and r = [min, max] suspicion removed; skipped');
       });
     } else if (d.EXCUSES != null) warn('dialog', 'EXCUSES', '', 'must be an array; ignored');
@@ -434,6 +930,7 @@
         pools: slotMap('pools', raw.pools, poolEntry, 0),
         templates: slotMap('templates', raw.templates, tmplEntry, 1),
         parodyOrgs: list('parodyOrg', raw.parodyOrgs, parodyOrg),
+        rogue: rogueContent(raw.rogue, true, baseIdsFor()),
         generate: typeof raw.generate === 'function' ? raw.generate : null,
         hasBulk: m.lazy.length > 0
       };
@@ -470,6 +967,15 @@
     return out;
   }
 
+  // base rogue content is read first: pack rogue files are checked against its ids (a colliding id is a presentation-only override)
+  var BASE_ROGUE = rogueContent(C.rogue, false);
+  function baseIdsFor() {
+    var m = {};
+    ['boons', 'relics', 'curses', 'events', 'bosses', 'loadouts'].forEach(function (f) { m[f] = idMap(BASE_ROGUE[f]); });
+    return m;
+  }
+  var mergedCache = {};
+
   var MAN = Array.isArray(window.AFK_PACK_MANIFESTS) ? window.AFK_PACK_MANIFESTS : [];
   var packList = [{ id: 'classic', name: 'The Boys (classic)', server: { name: 'the boys', icon: 'TB' }, builtin: true }];
   var packs = {};
@@ -484,6 +990,359 @@
     packList.push({ id: m.id, name: m.name, server: rp ? rp.server : { name: m.server || m.name, icon: '' }, manifest: m, ready: !!rp });
   });
 
+  // ---------- game night content (content/gamenight/*.js -> AFK_CONTENT.gamenight; packs: AFK_PACKS[id].gamenight) ----------
+  // Every entry is checked; a bad one is warned about and skipped, never thrown. A section below its minimum is reported in
+  // `missing` and the engine plays that section from its built-in fallback.
+  var GN_SLOTS = ['cause', 'escalation', 'proof', 'witness', 'promise'];
+  var GN_TOK = { me: 1, friend: 1, day: 1, time: 1, game: 1, week: 1, cause: 1, prop: 1 };
+  var GN_PART_TOK = { me: 1, friend: 1, day: 1, time: 1, game: 1 };
+  var GN_APPROACH = ['preempt', 'build', 'ghost', 'attend'];
+  var GN_ENDINGS = ['kicked', 'disbanded', 'survived', 'never-happens', 'retired'];
+  var GN_KINDS = ['skipped', 'called-out', 'dragged-in', 'played-without-you', 'everyone-flaked', 'different-game', 'just-talked', 'update-hell', 'ending'];
+  var GN_BANDS = ['calm', 'eyebrow', 'sus', 'detective'];
+  var GN_RKINDS = ['impressed', 'neutral', 'exasperated', 'detective'];
+  var GN_TAGRE = /^[a-z0-9_-]{1,32}$/i;
+  var GN_CTRL = /[\u0000-\u001f\u007f-\u009f]/;
+
+  function gnStr(k, id, field, v, min, max) {
+    if (typeof v === 'string' && v.trim().length >= min && v.length <= max && !GN_CTRL.test(v)) return v.trim();
+    warn(k, id, field, 'must be text of ' + min + '-' + max + ' characters, no control characters');
+    return null;
+  }
+  function gnInt(v, lo, hi) { return isNum(v) && v === Math.floor(v) && v >= lo && v <= hi; }
+  function gnLint(k, id, field, text, allowed) {
+    var m;
+    TOKEN_FIND.lastIndex = 0;
+    while ((m = TOKEN_FIND.exec(text))) if (!Object.prototype.hasOwnProperty.call(allowed, m[1])) warn(k, id, field, 'token {' + m[1] + '} is not allowed here; it will be stripped');
+  }
+  function gnTags(k, id, field, v) {
+    if (!Array.isArray(v)) { warn(k, id, field, 'must be an array of tag names; ignored'); return []; }
+    var out = v.filter(function (t) { return typeof t === 'string' && GN_TAGRE.test(t) && !BAD_KEY.test(t); }).slice(0, 12);
+    if (out.length !== v.length) warn(k, id, field, 'bad tag name(s) dropped');
+    return out;
+  }
+  // when: numeric ranges + tags + approach. Unknown keys are dropped.
+  var GN_WHEN_NUM = ['weekMin', 'weekMax', 'kMin', 'kMax', 'eMin', 'eMax', 'flakersMin', 'flakersMax', 'moraleMax', 'strikesMin', 'flakersMax'];
+  function gnWhen(k, id, w) {
+    var out = {};
+    if (w == null) return out;
+    if (!isObj(w)) { warn(k, id, 'when', 'must be an object; ignored'); return out; }
+    Object.keys(w).forEach(function (key) {
+      if (GN_WHEN_NUM.indexOf(key) >= 0) { if (isNum(w[key]) && w[key] >= -1 && w[key] <= 200) out[key] = w[key]; else warn(k, id, 'when.' + key, 'must be a number; ignored'); }
+      else if (key === 'tags') out.tags = gnTags(k, id, 'when.tags', w[key]);
+      else if (key === 'approach') { if (GN_APPROACH.indexOf(w[key]) >= 0) out.approach = w[key]; else warn(k, id, 'when.approach', 'must be ' + GN_APPROACH.join(', ') + '; ignored'); }
+    });
+    return out;
+  }
+  // one line of a pool: a string or { t, eMin, lvl, when, w, ask, needsTag }
+  function gnEntry(k, id, field, x, allowed, max) {
+    var e = typeof x === 'string' ? { t: x } : x;
+    if (!isObj(e)) { warn(k, id, field, 'line is not text or an object; dropped'); return null; }
+    var t = gnStr(k, id, field, e.t, 2, max || 200);
+    if (!t) return null;
+    if (!ctx) gnLint(k, id, field, t, allowed);
+    var o = { t: t };
+    if (e.eMin != null) { if (gnInt(e.eMin, 1, 30)) o.eMin = e.eMin; else warn(k, id, field + '.eMin', 'must be a whole number 1-30; ignored'); }
+    if (e.lvl != null) { if (gnInt(e.lvl, 1, 3)) o.lvl = e.lvl; else warn(k, id, field + '.lvl', 'must be 1, 2 or 3; ignored'); }
+    if (e.w != null) { if (isNum(e.w) && e.w >= 0.1 && e.w <= 5) o.w = e.w; else warn(k, id, field + '.w', 'must be 0.1-5; ignored'); }
+    if (e.when != null) o.when = gnWhen(k, id, e.when);
+    if (e.roll === true) o.roll = true;
+    if (e.ask != null) { if (GN_SLOTS.indexOf(e.ask) >= 0) o.ask = e.ask; else warn(k, id, field + '.ask', 'must be one of ' + GN_SLOTS.join(', ') + '; ignored'); }
+    if (e.needsTag != null) { if (typeof e.needsTag === 'string' && GN_TAGRE.test(e.needsTag)) o.needsTag = e.needsTag; else warn(k, id, field + '.needsTag', 'bad tag name; ignored'); }
+    return o;
+  }
+  function gnPool(k, id, field, arr, allowed, max) {
+    if (arr == null) return [];
+    if (!Array.isArray(arr)) { warn(k, id, field, 'must be an array of lines; ignored'); return []; }
+    var out = [];
+    arr.forEach(function (x, i) { var e = gnEntry(k, id, field + '[' + i + ']', x, allowed, max); if (e) out.push(e); });
+    return out;
+  }
+  function gnPart(e, id, story) {
+    var k = story ? 'gamenight story' : 'gamenight part';
+    var slot = story ? 'story' : e.slot;
+    if (!story && GN_SLOTS.indexOf(e.slot) < 0) { warn(k, id, 'slot', 'must be one of ' + GN_SLOTS.join(', ') + '; skipped'); return null; }
+    var label = gnStr(k, id, 'label', e.label, 3, 48);
+    var text = gnStr(k, id, 'text', e.text, 5, 180);
+    if (!label || !text) return null;
+    if (!gnInt(e.elab, 1, 5)) { warn(k, id, 'elab', 'must be a whole number 1-5; skipped'); return null; }
+    var o = { id: id, slot: slot, label: label, text: text, elab: e.elab };
+    gnLint(k, id, 'label', label, GN_PART_TOK);
+    gnLint(k, id, 'text', text, GN_PART_TOK);
+    if (slot === 'cause' || slot === 'proof' || slot === 'story') {
+      var sh = gnStr(k, id, 'short', e.short, 3, 40);
+      if (!sh) return null;
+      o.short = sh;
+    }
+    if (slot === 'proof') {
+      var pl = gnStr(k, id, 'proofLabel', e.proofLabel, 3, 32);
+      if (!pl) return null;
+      o.proofLabel = pl;
+    } else if (e.proofLabel != null) {
+      var pl2 = gnStr(k, id, 'proofLabel', e.proofLabel, 3, 32);
+      if (pl2) o.proofLabel = pl2;
+    }
+    o.tags = e.tags != null ? gnTags(k, id, 'tags', e.tags) : [];
+    ['contradicts', 'requires', 'fits'].forEach(function (f) { o[f] = e[f] != null ? gnTags(k, id, f, e[f]) : []; });
+    if (e.ttl != null) { if (gnInt(e.ttl, 0, 99)) o.ttl = e.ttl; else warn(k, id, 'ttl', 'must be a whole number 0-99; using the default'); }
+    if (e.callback != null) { if (typeof e.callback === 'boolean') o.callback = e.callback; else warn(k, id, 'callback', 'must be true or false; ignored'); }
+    if (o.callback && !o.requires.length) { warn(k, id, 'requires', 'a callback needs requires; treated as a normal part'); o.callback = false; }
+    if (e.lastMinute != null) { if (typeof e.lastMinute === 'boolean') o.lastMinute = e.lastMinute; else warn(k, id, 'lastMinute', 'must be true or false; ignored'); }
+    if (e.unlocks != null) { if (gnInt(e.unlocks, 1, 99)) o.unlocks = e.unlocks; else warn(k, id, 'unlocks', 'must be a whole number 1-99; ignored'); }
+    o.weight = 1;
+    if (e.weight != null) { if (isNum(e.weight) && e.weight >= 0.1 && e.weight <= 5) o.weight = e.weight; else warn(k, id, 'weight', 'must be 0.1-5; using 1'); }
+    return o;
+  }
+  function gnOutcome(e, id) {
+    var k = 'gamenight outcome';
+    if (GN_KINDS.indexOf(e.kind) < 0) { warn(k, id, 'kind', 'must be one of ' + GN_KINDS.join(', ') + '; skipped'); return null; }
+    var title = gnStr(k, id, 'title', e.title, 2, 60);
+    if (!title) return null;
+    var text = gnPool(k, id, 'text', e.text, GN_TOK, 240).map(function (x) { return x.t; });
+    if (!text.length) { warn(k, id, 'text', 'needs at least one narrative line; skipped'); return null; }
+    var o = { id: id, kind: e.kind, title: title, weight: 1, text: text.slice(0, 3), chat: gnPool(k, id, 'chat', e.chat, GN_TOK, 160).map(function (x) { return x.t; }).slice(0, 2), effects: { morale: 0, skep: 0, strike: 0, ptsMult: 1 }, when: gnWhen(k, id, e.when) };
+    if (e.weight != null) { if (isNum(e.weight) && e.weight >= 0.1 && e.weight <= 5) o.weight = e.weight; else warn(k, id, 'weight', 'must be 0.1-5; using 1'); }
+    if (e.kind === 'ending') {
+      if (GN_ENDINGS.indexOf(e.ending) < 0) { warn(k, id, 'ending', 'must be one of ' + GN_ENDINGS.join(', ') + '; skipped'); return null; }
+      o.ending = e.ending;
+    }
+    if (e.effects != null) {
+      if (!isObj(e.effects)) warn(k, id, 'effects', 'must be an object; ignored');
+      else [['morale', -15, 15], ['skep', -25, 25], ['strike', -1, 1], ['ptsMult', 0, 2]].forEach(function (d) {
+        var v = e.effects[d[0]];
+        if (v == null) return;
+        if (isNum(v)) o.effects[d[0]] = Math.max(d[1], Math.min(d[2], v));
+        else warn(k, id, 'effects.' + d[0], 'must be a number; ignored');
+      });
+    }
+    return o;
+  }
+  function gnReactions(raw) {
+    var k = 'gamenight reactions';
+    var out = { byBand: {}, friendLines: {} };
+    if (!isObj(raw)) return out;
+    GN_BANDS.forEach(function (b) {
+      out.byBand[b] = {};
+      GN_RKINDS.forEach(function (kind) {
+        var src = isObj(raw.byBand) && isObj(raw.byBand[b]) ? raw.byBand[b][kind] : null;
+        out.byBand[b][kind] = gnPool(k, b + '.' + kind, 'lines', src, GN_TOK, 160);
+      });
+    });
+    ['repeat', 'contradiction', 'callbackReward', 'proofDemand', 'proofPass', 'proofPerfect', 'proofFail', 'strike', 'strikeFinal', 'detectiveRise', 'detectiveStandDown', 'detectiveQuiz', 'believed'].forEach(function (key) {
+      out[key] = gnPool(k, key, 'lines', raw[key], GN_TOK, 160);
+    });
+    out.proofDecoys = [];
+    if (Array.isArray(raw.proofDecoys)) raw.proofDecoys.forEach(function (d, i) {
+      if (!isObj(d)) { warn(k, 'proofDecoys[' + i + ']', '', 'not an object; skipped'); return; }
+      var l = gnStr(k, 'proofDecoys[' + i + ']', 'label', d.label, 3, 32);
+      if (l) out.proofDecoys.push({ label: l, tags: gnTags(k, 'proofDecoys[' + i + ']', 'tags', d.tags == null ? [] : d.tags) });
+    });
+    if (isObj(raw.friendLines)) Object.keys(raw.friendLines).forEach(function (fid) {
+      if (BAD_KEY.test(fid) || !/^[A-Za-z0-9_-]{1,32}$/.test(fid) || !isObj(raw.friendLines[fid])) return;
+      var o = {};
+      GN_RKINDS.forEach(function (kind) { var p = gnPool(k, 'friendLines.' + fid, kind, raw.friendLines[fid][kind], GN_TOK, 160); if (p.length) o[kind] = p; });
+      out.friendLines[fid] = o;
+    });
+    return out;
+  }
+  function gnPlan(raw) {
+    var k = 'gamenight plan';
+    var out = { gameNames: [], argue: { day: [], time: [], game: [] }, gamePicker: { options: [], chaos: [], outcomes: [] }, beats: { morning: [], afternoon: [], hour: [], zero: [], zeroAfter: [] }, counterOffers: [], disbandThreat: [], cancelOpeners: [], updateLines: [], differentGame: [] };
+    if (!isObj(raw)) return out;
+    if (Array.isArray(raw.gameNames)) raw.gameNames.forEach(function (n, i) { if (typeof n === 'string' && /^[\p{L}\p{N} .,'!?:&+()\-]{3,40}$/u.test(n)) out.gameNames.push(n.trim()); else warn(k, 'gameNames[' + i + ']', '', 'must be 3-40 characters of letters, digits and simple punctuation; dropped'); });
+    var A = isObj(raw.argue) ? raw.argue : {};
+    ['day', 'time', 'game'].forEach(function (f) { out.argue[f] = gnPool(k, 'argue.' + f, 'lines', A[f], GN_TOK, 160); });
+    var P = isObj(raw.gamePicker) ? raw.gamePicker : {};
+    if (Array.isArray(P.options)) P.options.forEach(function (o, i) {
+      var id = 'gamePicker.options[' + i + ']';
+      if (!isObj(o) || !isId(o.id)) { warn(k, id, 'id', 'missing or invalid; skipped'); return; }
+      var nm = gnStr(k, o.id, 'name', o.name, 3, 32);
+      if (!nm) return;
+      var veto = gnPool(k, o.id, 'vetoLines', o.vetoLines, GN_TOK, 160).map(function (x) { return x.t; });
+      out.gamePicker.options.push({ id: o.id, name: nm, vetoLines: veto });
+    });
+    out.gamePicker.chaos = gnPool(k, 'gamePicker.chaos', 'lines', P.chaos, GN_TOK, 160);
+    out.gamePicker.outcomes = gnPool(k, 'gamePicker.outcomes', 'lines', P.outcomes, GN_TOK, 160);
+    var B = isObj(raw.beats) ? raw.beats : {};
+    Object.keys(out.beats).forEach(function (b) { out.beats[b] = gnPool(k, 'beats.' + b, 'lines', B[b], GN_TOK, 160); });
+    out.disbandThreat = gnPool(k, 'disbandThreat', 'lines', raw.disbandThreat, GN_TOK, 160);
+    out.updateLines = gnPool(k, 'updateLines', 'lines', raw.updateLines, GN_TOK, 160);
+    out.differentGame = gnPool(k, 'differentGame', 'lines', raw.differentGame, GN_TOK, 160);
+    out.counterOffers = list('gamenight counter-offer', raw.counterOffers, function (e, id) {
+      var t = gnStr('gamenight counter-offer', id, 't', e.t, 3, 140);
+      var acc = gnStr('gamenight counter-offer', id, 'accept', e.accept, 3, 160);
+      if (!t || !acc) return null;
+      var o = { id: id, t: t, accept: acc, kind: 'time', pressure: 1, declineNeeds: 'escalation', when: gnWhen('gamenight counter-offer', id, e.when) };
+      if (e.kind != null) { if (['time', 'wait', 'move', 'download', 'lite'].indexOf(e.kind) >= 0) o.kind = e.kind; else warn('gamenight counter-offer', id, 'kind', 'unknown kind; using time'); }
+      if (e.pressure != null) { if (gnInt(e.pressure, 1, 3)) o.pressure = e.pressure; else warn('gamenight counter-offer', id, 'pressure', 'must be 1-3; using 1'); }
+      if (e.declineNeeds != null) { if (GN_SLOTS.indexOf(e.declineNeeds) >= 0) o.declineNeeds = e.declineNeeds; else warn('gamenight counter-offer', id, 'declineNeeds', 'must be a part slot; using escalation'); }
+      return o;
+    });
+    out.cancelOpeners = list('gamenight cancel-opener', raw.cancelOpeners, function (e, id) {
+      var t = gnStr('gamenight cancel-opener', id, 't', e.t, 3, 100);
+      return t ? { id: id, t: t, elab: gnInt(e.elab, 1, 5) ? e.elab : 3 } : null;
+    });
+    return out;
+  }
+  function gnFlakes(raw) {
+    var k = 'gamenight flakes';
+    var out = { traits: {}, friendExcuses: [], events: [], solidarity: [], playerCatchesFriend: [], snowball: [] };
+    if (!isObj(raw)) return out;
+    if (isObj(raw.traits)) Object.keys(raw.traits).forEach(function (tid) {
+      if (BAD_KEY.test(tid) || !/^[A-Za-z0-9_-]{1,32}$/.test(tid) || !isObj(raw.traits[tid])) return;
+      var t = {};
+      ['flakiness', 'persistence', 'gullibility', 'drama'].forEach(function (f) {
+        var v = raw.traits[tid][f];
+        if (v == null) return;
+        if (isNum(v) && v >= 0 && v <= 1) t[f] = v; else warn(k, 'traits.' + tid, f, 'must be 0-1; ignored');
+      });
+      out.traits[tid] = t;
+    });
+    out.friendExcuses = list('gamenight friend-excuse', raw.friendExcuses, function (e, id) {
+      var t = gnStr('gamenight friend-excuse', id, 't', e.t, 3, 140);
+      if (!t) return null;
+      var o = { id: id, t: t, elab: gnInt(e.elab, 1, 5) ? e.elab : 2, beat: ['any', 'morning', 'afternoon', 'hour', 'zero'].indexOf(e.beat) >= 0 ? e.beat : 'any', caught: '', weight: 1 };
+      if (e.caught != null) { var c = gnStr('gamenight friend-excuse', id, 'caught', e.caught, 2, 140); if (c) o.caught = c; }
+      if (e.weight != null) { if (isNum(e.weight) && e.weight >= 0.1 && e.weight <= 5) o.weight = e.weight; else warn('gamenight friend-excuse', id, 'weight', 'must be 0.1-5; using 1'); }
+      return o;
+    });
+    out.events = list('gamenight event', raw.events, function (e, id) {
+      var kinds = ['mass-flake', 'friend-caught', 'friend-late', 'friend-counter', 'friend-detective'];
+      if (kinds.indexOf(e.kind) < 0) { warn('gamenight event', id, 'kind', 'must be one of ' + kinds.join(', ') + '; skipped'); return null; }
+      if (!Array.isArray(e.lines) || !e.lines.length) { warn('gamenight event', id, 'lines', 'needs at least one { who, t } line; skipped'); return null; }
+      var lines = [];
+      e.lines.slice(0, 6).forEach(function (l, i) {
+        if (!isObj(l) || !/^friend[2-5]?$/.test(String(l.who))) { warn('gamenight event', id, 'lines[' + i + '].who', 'must be friend, friend2 .. friend5; dropped'); return; }
+        var t = gnStr('gamenight event', id, 'lines[' + i + '].t', l.t, 2, 160);
+        if (t) lines.push({ who: l.who, t: t });
+      });
+      if (!lines.length) return null;
+      var o = { id: id, kind: e.kind, weight: 1, when: gnWhen('gamenight event', id, e.when), lines: lines };
+      if (e.persona != null && ['here-liar', 'on-the-way', 'last-second'].indexOf(e.persona) >= 0) o.persona = e.persona;
+      if (e.weight != null) { if (isNum(e.weight) && e.weight >= 0.1 && e.weight <= 5) o.weight = e.weight; else warn('gamenight event', id, 'weight', 'must be 0.1-5; using 1'); }
+      return o;
+    });
+    ['solidarity', 'playerCatchesFriend', 'snowball'].forEach(function (f) { out[f] = gnPool(k, f, 'lines', raw[f], GN_TOK, 160); });
+    return out;
+  }
+  var GN_WHEN_KEYS = /^[a-zA-Z]{1,24}$/;
+  function gnCleanAll(raw, isPack) {
+    var k = 'gamenight';
+    var out = { present: false, replace: [], parts: [], fullStories: [], reactions: gnReactions(null), plan: gnPlan(null), outcomes: [], flakes: gnFlakes(null), achievements: [], awards: [], titles: [] };
+    if (!isObj(raw)) return out;
+    out.present = true;
+    if (Array.isArray(raw.replace)) out.replace = raw.replace.filter(function (p) { return typeof p === 'string' && /^[A-Za-z.]{1,40}$/.test(p) && !/__proto__|constructor|prototype/.test(p); }).slice(0, 20);
+    out.parts = list('gamenight part', raw.parts, function (e, id) { return gnPart(e, id, false); });
+    out.fullStories = list('gamenight story', raw.fullStories, function (e, id) { return gnPart(e, id, true); });
+    out.reactions = gnReactions(raw.reactions);
+    out.plan = gnPlan(raw.plan);
+    out.outcomes = list('gamenight outcome', raw.outcomes, gnOutcome);
+    out.flakes = gnFlakes(raw.flakes);
+    var simple = function (kind, arr, withWhen) {
+      return list(kind, arr, function (e, id) {
+        var nm = gnStr(kind, id, 'name', e.name, 2, 40);
+        if (!nm) return null;
+        var o = { id: id, name: nm, desc: typeof e.desc === 'string' ? e.desc.slice(0, 120) : '', hint: typeof e.hint === 'string' ? e.hint.slice(0, 120) : '' };
+        if (withWhen) {
+          o.when = {};
+          if (isObj(e.when)) Object.keys(e.when).forEach(function (key) {
+            var v = e.when[key];
+            if (!GN_WHEN_KEYS.test(key) || BAD_KEY.test(key)) return;
+            if (typeof v === 'number' && isFinite(v)) o.when[key] = v;
+            else if (typeof v === 'boolean') o.when[key] = v;
+            else if (typeof v === 'string' && v.length <= 32) o.when[key] = v;
+          });
+        }
+        return o;
+      });
+    };
+    out.achievements = simple('gamenight achievement', raw.achievements, true);
+    out.awards = simple('gamenight award', raw.awards, true);
+    out.titles = list('gamenight title', raw.titles, function (e, id) {
+      var nm = gnStr('gamenight title', id, 'name', e.name, 2, 40);
+      if (!nm) return null;
+      if (!isNum(e.minPts) || e.minPts < 0 || e.minPts > 1e7) { warn('gamenight title', id, 'minPts', 'must be a number 0-10000000; skipped'); return null; }
+      return { id: id, name: nm, minPts: e.minPts };
+    });
+    // tag cross-check (warn only)
+    var declared = {};
+    out.parts.concat(out.fullStories).forEach(function (p) { p.tags.forEach(function (t) { declared[t] = true; }); });
+    if (!isPack) out.parts.concat(out.fullStories).forEach(function (p) {
+      ['requires', 'contradicts', 'fits'].forEach(function (f) { p[f].forEach(function (t) { if (!declared[t]) warn('gamenight part', p.id, f, 'tag "' + t + '" is not granted by any part'); }); });
+    });
+    return out;
+  }
+  // merge a pack's gamenight content over the base (spec 6.7): id lists replace-by-id, line pools append unless the pack lists the path in `replace`
+  function gnMerge(base, pack) {
+    if (!pack || !pack.present) return base;
+    var rep = function (p) { return pack.replace.indexOf(p) >= 0; };
+    var byId = function (a, b) { var m = {}; var o = []; a.concat(b).forEach(function (x) { if (m[x.id] != null) o[m[x.id]] = x; else { m[x.id] = o.length; o.push(x); } }); return o; };
+    var app = function (p, a, b) { return rep(p) ? b.slice() : a.concat(b); };
+    var out = { present: true, replace: [], parts: byId(base.parts, pack.parts), fullStories: byId(base.fullStories, pack.fullStories), outcomes: byId(base.outcomes, pack.outcomes), achievements: byId(base.achievements, pack.achievements), awards: byId(base.awards, pack.awards), titles: byId(base.titles, pack.titles) };
+    var br = base.reactions;
+    var pr = pack.reactions;
+    var rx = { byBand: {}, proofDecoys: app('reactions.proofDecoys', br.proofDecoys, pr.proofDecoys), friendLines: {} };
+    GN_BANDS.forEach(function (b) {
+      rx.byBand[b] = {};
+      GN_RKINDS.forEach(function (kind) { rx.byBand[b][kind] = rep('reactions.byBand') || rep('reactions.byBand.' + b) ? pr.byBand[b][kind].slice() : br.byBand[b][kind].concat(pr.byBand[b][kind]); });
+    });
+    ['repeat', 'contradiction', 'callbackReward', 'proofDemand', 'proofPass', 'proofPerfect', 'proofFail', 'strike', 'strikeFinal', 'detectiveRise', 'detectiveStandDown', 'detectiveQuiz', 'believed'].forEach(function (key) { rx[key] = app('reactions.' + key, br[key], pr[key]); });
+    Object.keys(br.friendLines).concat(Object.keys(pr.friendLines)).forEach(function (fid) {
+      if (rx.friendLines[fid]) return;
+      var o = {};
+      GN_RKINDS.forEach(function (kind) { var a = (br.friendLines[fid] || {})[kind] || []; var b = (pr.friendLines[fid] || {})[kind] || []; var m = rep('reactions.friendLines') ? b : a.concat(b); if (m.length) o[kind] = m; });
+      rx.friendLines[fid] = o;
+    });
+    out.reactions = rx;
+    var bp = base.plan;
+    var pp = pack.plan;
+    var pl = { gameNames: app('plan.gameNames', bp.gameNames, pp.gameNames), argue: {}, gamePicker: { options: byId(bp.gamePicker.options, pp.gamePicker.options), chaos: app('plan.gamePicker.chaos', bp.gamePicker.chaos, pp.gamePicker.chaos), outcomes: app('plan.gamePicker.outcomes', bp.gamePicker.outcomes, pp.gamePicker.outcomes) }, beats: {}, counterOffers: byId(bp.counterOffers, pp.counterOffers), cancelOpeners: byId(bp.cancelOpeners, pp.cancelOpeners) };
+    ['day', 'time', 'game'].forEach(function (f) { pl.argue[f] = app('plan.argue.' + f, bp.argue[f], pp.argue[f]); });
+    Object.keys(bp.beats).forEach(function (f) { pl.beats[f] = app('plan.beats.' + f, bp.beats[f], pp.beats[f]); });
+    ['disbandThreat', 'updateLines', 'differentGame'].forEach(function (f) { pl[f] = app('plan.' + f, bp[f], pp[f]); });
+    out.plan = pl;
+    var bf = base.flakes;
+    var pf = pack.flakes;
+    var tr = {};
+    Object.keys(bf.traits).forEach(function (t) { tr[t] = bf.traits[t]; });
+    Object.keys(pf.traits).forEach(function (t) { var m = {}; var a = tr[t] || {}; Object.keys(a).forEach(function (q) { m[q] = a[q]; }); Object.keys(pf.traits[t]).forEach(function (q) { m[q] = pf.traits[t][q]; }); tr[t] = m; });
+    out.flakes = { traits: tr, friendExcuses: byId(bf.friendExcuses, pf.friendExcuses), events: byId(bf.events, pf.events) };
+    ['solidarity', 'playerCatchesFriend', 'snowball'].forEach(function (f) { out.flakes[f] = app('flakes.' + f, bf[f], pf[f]); });
+    return out;
+  }
+  // sections under their minimum are listed in `missing`; the engine uses its built-in fallback for them
+  function gnViable(c) {
+    var miss = [];
+    var cnt = function (slot) { return c.parts.filter(function (p) { return p.slot === slot; }).length; };
+    if (cnt('cause') < 4 || GN_SLOTS.slice(1).some(function (s) { return cnt(s) < 2; })) miss.push('parts');
+    var rxOk = GN_BANDS.every(function (b) { return GN_RKINDS.every(function (kk) { return c.reactions.byBand[b][kk].length >= 1; }); });
+    if (!rxOk) miss.push('reactions');
+    if (!Object.keys(c.plan.beats).every(function (b) { return c.plan.beats[b].length >= 2 || b === 'zeroAfter' && c.plan.beats[b].length >= 1; })) miss.push('plan');
+    var kinds = {};
+    c.outcomes.forEach(function (o) { kinds[o.kind] = true; });
+    if (!GN_KINDS.every(function (x) { return kinds[x]; })) miss.push('outcomes');
+    return miss;
+  }
+  var GN_BASE = gnCleanAll(C.gamenight, false);
+  var gnCache = {};
+  function gnFor(id) {
+    var key = id || 'classic';
+    if (gnCache[key]) return gnCache[key];
+    var pk = null;
+    if (key !== 'classic') {
+      var rawPk = window.AFK_PACKS && isObj(window.AFK_PACKS) && isObj(window.AFK_PACKS[key]) ? window.AFK_PACKS[key].gamenight : null;
+      if (rawPk) {
+        ctx = '[' + key + '] ';
+        try { pk = gnCleanAll(rawPk, true); } finally { ctx = ''; }
+      }
+    }
+    var merged = gnMerge(GN_BASE, pk);
+    merged.missing = merged.present ? gnViable(merged) : ['all'];
+    if (merged.missing.length) warn('gamenight', key, '', merged.missing.join(', ') + ' content is missing or below its minimum; the built-in fallback is used for it');
+    gnCache[key] = merged;
+    return merged;
+  }
+
   // ---------- run ----------
   var R = {
     characters: list('character', C.characters, character),
@@ -494,6 +1353,23 @@
     pathEvents: pathEvents(C.pathEvents),
     pathLines: lineMap('pathLines', C.pathLines),
     dialog: dialog(C.dialog),
+    roster: rosterContent(C.roster),
+    rogue: BASE_ROGUE.present ? BASE_ROGUE : null,
+    // the rogue content a given pack plays with (base + that pack, merged once and cached); null when no rogue content exists
+    rogueFor: function (id) {
+      if (!BASE_ROGUE.present) return null;
+      var key = id || 'classic';
+      var pk = key !== 'classic' && packs[key] && packs[key].rogue && packs[key].rogue.present ? packs[key].rogue : null;
+      var ck = key + (pk ? '+' : '');
+      if (!mergedCache[ck]) mergedCache[ck] = mergeRogue(BASE_ROGUE, pk);
+      return mergedCache[ck];
+    },
+    // game night content: the base set merged with a pack's (cached). `missing` lists sections below their minimum (built-ins fill in)
+    gamenight: GN_BASE.present ? GN_BASE : null,
+    gamenightFor: gnFor,
+    effectDefs: EFFECT_DEFS,
+    enums: { categories: CATEGORIES, tiers: TIERS, rarities: RARITIES, traits: TRAITS },
+    effectsObj: effectsObj,
     packList: packList,
     packs: packs,
     resolvePack: function (id) {
@@ -527,7 +1403,17 @@
     });
   }
 
+  var hasFriendTok = function (x) { return typeof x === 'string' && /\{friend(:[^{}]*)?\}/.test(x); };
+  var friendLines = 0;
+  Object.keys(R.dialog.LINES).forEach(function (key) { R.dialog.LINES[key].forEach(function (x) { if (hasFriendTok(x)) friendLines++; }); });
+  R.characters.forEach(function (c) {
+    Object.keys(c.lines).forEach(function (key) { c.lines[key].forEach(function (x) { if (hasFriendTok(x)) friendLines++; }); });
+    c.digs.forEach(function (d) { if (hasFriendTok(d.text)) friendLines++; });
+  });
+
   R.counts = {
+    friendTokenLines: friendLines,
+    rosterTraits: Object.keys(R.roster.traits).length,
     characters: R.characters.length,
     friends: R.characters.filter(function (c) { return c.role === 'friend'; }).length,
     residents: R.characters.filter(function (c) { return c.role === 'resident'; }).length,
@@ -535,6 +1421,10 @@
     digs: R.characters.reduce(function (n, c) { return n + c.digs.length; }, 0),
     channels: R.channels.length,
     items: R.items.length,
+    rogueBoons: BASE_ROGUE.boons.length,
+    gamenightParts: GN_BASE.parts.length,
+    gamenightOutcomes: GN_BASE.outcomes.length,
+    rogueRelics: BASE_ROGUE.relics.length,
     themes: R.themes.length,
     paths: R.paths.length,
     pathEvents: Object.keys(R.pathEvents).length,

@@ -1,0 +1,58 @@
+/* BoberNet pack: Game Night outcomes (RESOLVE cards). Tokens: {me} {friend} {day} {time} {game} {week} {cause} {prop}. */
+(function () {
+  var P = window.AFK_PACKS = window.AFK_PACKS || {};
+  var B = P.bobernet = P.bobernet || {};
+  var G = B.gamenight = B.gamenight || {};
+  G.outcomes = (G.outcomes || []).concat([
+    { id: 'o-bn-skipped-clean', kind: 'skipped', title: 'Cleared the hangar', weight: 1, when: { weekMin: 1, kMax: 49, eMin: 8 },
+      text: ["{day} night came and went. {game} was not flown by {me}. the org channel is quiet.", "the ship sat in the hangar, fuel full, going nowhere."],
+      chat: ["ok. see you next {day} i guess"], effects: { morale: -2, skep: 0, strike: 0, ptsMult: 1 } },
+    { id: 'o-bn-skipped-claimed', kind: 'skipped', title: 'Claim approved', weight: 1, when: { weekMin: 1, kMax: 59, tags: ['claim'] },
+      text: ["{cause} bought you the whole evening. the claim timer is a hero.", "the org leader nods at the empty seat."],
+      chat: ["that tracks. send a screenshot later"], effects: { morale: 0, skep: -2, strike: 0, ptsMult: 1.05 } },
+    { id: 'o-bn-skipped-wild', kind: 'skipped', title: 'Legendary alibi', weight: 1, when: { eMin: 16, kMax: 69 },
+      text: ["{cause} entered the org's hall of fame. nobody asked a follow-up question.", "even {friend} stopped typing to clap."],
+      chat: ["frame it. {me} wins this one"], effects: { morale: 4, skep: -4, strike: 0, ptsMult: 1.2 } },
+    { id: 'o-bn-skipped-ghost', kind: 'skipped', title: 'Quietly vanished', weight: 1, when: { approach: 'ghost', kMax: 49 },
+      text: ["you went AFK and the org never noticed. the hangar door stayed shut.", "a distant elevator hummed. nobody connected the dots."],
+      chat: ["huh, where did {me} go"], effects: { morale: -1, skep: 0, strike: 0, ptsMult: 1.2 } },
+    { id: 'o-bn-called-out', kind: 'called-out', title: 'Receipts were presented', weight: 1, when: { kMin: 25 },
+      text: ["someone opened the org log. it said you were in the hangar, not a 30k.", "{friend} typed 'lol' with seven exclamation marks."],
+      chat: ["the logs don't lie {me}", "strike. add it to your hangar wall"], effects: { morale: -8, skep: 15, strike: 1, ptsMult: 0 } },
+    { id: 'o-bn-called-out-contradiction', kind: 'called-out', title: 'Your stories collided', weight: 1, when: { tags: ['ship-lost', 'claim', 'big-haul'], kMin: 15 },
+      text: ["your ship was wiped. also you were mid-haul. both can't be true.", "the org did a quick replay. both clips exist. only one is you."],
+      chat: ["which one is it {me}", "ok I'm writing this down"], effects: { morale: -8, skep: 20, strike: 1, ptsMult: 0 } },
+    { id: 'o-bn-dragged-in', kind: 'dragged-in', title: 'The 20-minute lie', weight: 1,
+      text: ["you said yes to 'just 20 minutes' and it was 4 hours of stragglers.", "someone said 'one more cargo' nine times."],
+      chat: ["see, that wasn't so bad"], effects: { morale: 5, skep: -10, strike: 0, ptsMult: 1 } },
+    { id: 'o-bn-played-without-you', kind: 'played-without-you', title: 'They launched without you', weight: 1,
+      text: ["the org flew the op. {game} went great. you heard about it in the replay.", "someone left your empty seat in the escort formation."],
+      chat: ["we did the whole thing. you should've seen it"], effects: { morale: -10, skep: 0, strike: 0, ptsMult: 0.1 } },
+    { id: 'o-bn-everyone-flaked', kind: 'everyone-flaked', title: 'Nobody flew', weight: 1,
+      text: ["not a single ship left the hangar. the org chat is 40 'lol's.", "the elevator went up and down on its own. nobody looked."],
+      chat: ["so... same time next {day}?", "lol. ok. see you never"], effects: { morale: 6, skep: -5, strike: 0, ptsMult: 1 } },
+    { id: 'o-bn-different-game', kind: 'different-game', title: 'Org voted for cargo', weight: 1,
+      text: ["fleet night became cargo night. you weren't there for either.", "someone set a new standard: hauling is the group's love language."],
+      chat: ["we're doing cargo instead, it's fine"], effects: { morale: 0, skep: 0, strike: 0, ptsMult: 0.8 } },
+    { id: 'o-bn-just-talked', kind: 'just-talked', title: '4 minutes of flight, 3 hours of talk', weight: 1,
+      text: ["they flew for 4 minutes and talked about ship layouts for 3 hours.", "the org counted it as a successful op."],
+      chat: ["best fleet night ever, you missed it"], effects: { morale: 4, skep: 0, strike: 0, ptsMult: 0.9 } },
+    { id: 'o-bn-update-hell-80gb', kind: 'update-hell', title: 'The 80GB patch', weight: 1,
+      text: ["{game} wanted 80GB. nobody has 80GB. the whole org sat in the launcher.", "your excuse became moot the moment the patch notes dropped."],
+      chat: ["lol the patch got us all"], effects: { morale: 3, skep: 0, strike: 0, ptsMult: 0.5 } },
+    { id: 'o-bn-update-hell-wipe', kind: 'update-hell', title: 'Patch wiped the org', weight: 1, when: { weekMin: 4 },
+      text: ["the patch wiped everyone's ships. the entire org is a sad naked mannequin.", "nobody flew. everyone filed a support ticket."],
+      chat: ["I lost three ships and a bunch of dignity"], effects: { morale: 3, skep: 0, strike: 0, ptsMult: 0.5 } },
+    /* ---- endings: same ids as classic replace them with pack text ---- */
+    { id: 'end-kicked', kind: 'ending', ending: 'kicked', title: 'Removed from the org',
+      text: ["{me} was removed from the org. the roster was renamed 'Fleet Night (no {me})' and flew that very night."] },
+    { id: 'end-disbanded', kind: 'ending', ending: 'disbanded', title: 'The org dissolved',
+      text: ["the org is archived. nobody can agree who dissolved it. the elevator is still running."] },
+    { id: 'end-survived', kind: 'ending', ending: 'survived', title: 'Survived the season',
+      text: ["you survived {week} weeks of {day}s. your ship is still in claim. the org still hasn't flown."] },
+    { id: 'end-never-happens', kind: 'ending', ending: 'never-happens', title: 'It never happened',
+      text: ["no one in the org has flown since the first night. peak friendship, zero ships."] },
+    { id: 'end-retired', kind: 'ending', ending: 'retired', title: 'Went to bed early',
+      text: ["you cashed out and went to bed. the org flew a successful op without you."] }
+  ]);
+})();
