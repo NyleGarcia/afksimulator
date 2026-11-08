@@ -379,6 +379,21 @@ AFK_CONTENT.pathLines = { moved: ['rip {me}'] };   // moved, drag, aloneLeave, a
 ```
 
 A mic event can also have `funny: true` and `bonus: 25` (a chance for "chat clipped it" bonus points).
+An event may also set `icon` (emoji, max 8 chars, default 🎙️) and `tag` (max 16 chars, default `mic`); the system line reads `{icon} {tag}: {label}`,
+so non-mic events (status spotted, notification pings, kitchen noises) can read right. Each AFK offer shows 3 random paths from the pool for the round's server mode,
+so adding paths just adds variety. Audible-in-VC paths should use `modes: ['no-timeout']`.
+### Path mechanics (all optional)
+
+| field | effect |
+|---|---|
+| `calm: 1.4` | suspicion does not grow until AFK time reaches 1.4x the promise |
+| `punctual: 2.2` | returning within 15% of the promise multiplies the banked points by 2.2 |
+| `earlyKeep: 0.8` | returning early keeps 80% of points instead of the usual 25% |
+| `pulseEvery: 40, pulseLen: 12, pulsePts: 2.2, pulseSus: 2.2` | every 40 game-minutes a 12-minute surge multiplies points and suspicion |
+| `silent: true` | friends never ping you while AFK (so no triage), suspicion still grows |
+
+The path offer shows a short tag for each (`calm start`, `surges`, `no pings`, `on-time bonus`, `early exit ok`) and the AFK panel status line shows the surge clock or the on-time window.
+
 If no valid path loads, the game uses a single built-in "walk away".
 
 ## Dialog (`content/dialog.js`)

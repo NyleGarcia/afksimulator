@@ -226,7 +226,9 @@ function rogueShareButtons(getEntry) {
     sh.addEventListener('click', () => { Promise.resolve(navigator.share({ text: rogueShareText(full()) })).catch(() => { /* cancelled */ }); });
     row.appendChild(sh);
   }
-  return row;
+  const box = el('div', 'share-box');
+  box.append(row, shareImageButtons(() => rogueCardSpec(full())));
+  return box;
 }
 
 const urlParams = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(''); } })();

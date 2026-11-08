@@ -1409,6 +1409,11 @@
       if (pm) bits.push(`in ${String(pm).replace(/[{}\u0000-\u001f]/g, '')}`);
       return bits.join(' · ');
     }
+    function cardSpecFor(e) {
+      const day = DAYS[Number.isInteger(e.d) && e.d >= 0 && e.d <= 6 ? e.d : 3];
+      return api.gnCardSpec(e, day, ENDING_LABEL[e.k]);
+    }
+    function topCardSpec() { const s = gnScores()[0]; return s ? cardSpecFor(s) : null; }
     function saveEntry() {
       const e = entryNow();
       const all = gnScores();
@@ -1467,6 +1472,7 @@
       row.appendChild(c);
       if (typeof navigator.share === 'function') { const sh = el('button', 'btn alt', 'Share…'); sh.addEventListener('click', () => { Promise.resolve(navigator.share({ text: shareTextFor(e) })).catch(() => {}); }); row.appendChild(sh); }
       nodes.push(row);
+      nodes.push(api.shareImageButtons(() => cardSpecFor(e)));
       nodes.push(api.overlayLinks());
       const again = el('button', 'btn', 'Another season', 'gnAgain');
       again.addEventListener('click', () => api.restart());
@@ -1695,7 +1701,7 @@
     }
 
     return {
-      avail, start, introLine, afkDone, ghostKick, hud, ledgerView, settingsNodes, startNodes, leaderboardNode, topShareText, shareTextFor, bestScore, achListNode, debug,
+      avail, start, introLine, afkDone, ghostKick, hud, ledgerView, settingsNodes, startNodes, leaderboardNode, topShareText, topCardSpec, shareTextFor, bestScore, achListNode, debug,
       titleOf: () => titleOf(readSettings()), readSettings, cleanSettings, hasRun: () => !!G && !G.over, clear: () => { clearTimer(); G = null; proofState = null; bd = null; hud(); },
       cleanGame, gnScores, load: loadContent, gname,
     };

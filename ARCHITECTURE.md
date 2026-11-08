@@ -44,6 +44,7 @@ global lexical scope, so **every file sees every other file's top-level names**,
 | `js/shop.js` | ~280 | inventory strip, active abilities, shop modal (`showShop`, `openShop`) | none |
 | `js/afk.js` | ~610 | flow: `start`, brb/path choice, `goAfk`, `afkStep`, VC drag, mic events, `comeBack`, `chooseExcuse`, `bank`, `nextRound`, kick (`onKickLethal` hook declared here) | none |
 | `js/voice.js` | ~230 | player-chosen voice channels (sidebar + phone buttons, `joinVoice`), park in the AFK channel and the Rejoin voice step (`vcPark`, `offerRejoin`, `doRejoin`), `VC_TUNE`, per-channel flavor. Classic only (`vcOn()`); loaded after `afk.js`, called from `ui.js`/`afk.js` at runtime | none |
+| `js/shareimg.js` | ~230 | canvas PNG score card (classic/rogue/Game Night specs), Copy image / Save image buttons; loaded before overlays.js | none |
 | `js/overlays.js` | ~390 | persistence (scores, achievements), modal/overlay plumbing, share text, pack picker, leaderboard, start + game-over screens | none |
 | `js/settings.js` | ~250 | "Your crew" settings, settings overlay, `setName` | none |
 | `js/rogue.js` | ~620 | rogue constants (`RG_TUNE`), mode flags (`gameMode`), meta progression, plan, boons/relics/curses, cards, intro/boon/relic/event/shop steps | `extraSources = ...` |

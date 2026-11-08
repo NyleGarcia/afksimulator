@@ -84,7 +84,7 @@ const GN_API_SET = (o) => { const d = GN.debug(); d.setSettings(o); };
 const GN = window.AFK_GN ? window.AFK_GN.create({
   S, ME, $, el, store, clamp, fmtN, later, post, sys, toast,
   setActions,
-  clearActions, render, announce, copyText, sanitizeName, openModal, closeModal, openOverlay, closeOverlay, overlayLinks,
+  clearActions, render, announce, copyText, shareImageButtons, gnCardSpec, sanitizeName, openModal, closeModal, openOverlay, closeOverlay, overlayLinks,
   DEBUG,
   content: () => (typeof R.gamenightFor === 'function' ? R.gamenightFor(packId) : null),
   crew: () => S.friends,

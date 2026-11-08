@@ -68,3 +68,4 @@
 /* ---- first-run name prompt ---- */
 .name-err { color: #ff6b6b; font-size: 13px; min-height: 1.2em; margin: 6px 0 0; }
 .name-input[aria-invalid="true"] { border-color: #ff6b6b; }
+.share-box{margin:0}.share-box .btn-row{margin-top:0}

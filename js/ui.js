@@ -203,6 +203,8 @@ function render() {
     $('#afkPath').textContent = `Path: ${pn} · ${S.mode} server${S.mode === 'afk-timeout' ? ` (bot moves you at ${fmtMins(S.threshold)})` : ''}${cm ? ` · ${chanLabel(curVc())}: ${cm}` : ''}`;
     let st = '';
     if (S.inAfkCh && S.autoMoved) st = `${AFK_CH.icon} moved to ${AFK_CH.name} at ${fmtMins(S.movedAt)}${S.botBump ? ` · 🤖 AFK bot flagged you: +${S.botBump}% suspicion` : ''} · suspicion frozen · points capped at ${fmtN(S.cap)}`;
+    else if (S.path && S.path.pulseEvery) st = pathSurge(S.path) ? '🔥 SURGE: points and suspicion boosted' : `🔥 next surge in ${fmtMins(S.path.pulseEvery - S.path.pulseLen - (S.mins % S.path.pulseEvery))}`;
+    else if (S.path && S.path.punctual > 1) st = `⏰ on-time window ${fmtMins(S.promise * 0.85)}–${fmtMins(S.promise * 1.15)}: x${S.path.punctual} points`;
     else if (S.aloneSince != null) st = `Discord: you've been alone for ${fmtMins(S.mins - S.aloneSince)}`;
     else if (S.path && S.path.events.includes('alone-drift')) st = `friends in ${curVc().name}: ${S.friends.filter(inVcNow).length}/${S.friends.length}`;
     $('#afkStatus').textContent = st;

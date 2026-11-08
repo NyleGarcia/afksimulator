@@ -98,7 +98,9 @@ const pathPool = () => {
   const pool = PATHS.filter((p) => !Array.isArray(p.modes) || p.modes.includes(S.mode));
   return pool.length ? pool : [PATHS.find((p) => !Array.isArray(p.modes)) || FALLBACK_PATH];
 };
-const pathSub = (p) => `${p.desc || ''} · x${p.pointMult}${p.pointGrow ? '+' : ''} pts · ${p.risk || (p.susMult < 0.8 ? 'low suspicion' : p.susMult > 1.1 ? 'high kick risk' : 'normal suspicion')}`;
+const pathSub = (p) => `${p.desc || ''} · x${p.pointMult}${p.pointGrow ? '+' : ''} pts${pathMechTag(p)} · ${p.risk || (p.susMult < 0.8 ? 'low suspicion' : p.susMult > 1.1 ? 'high kick risk' : 'normal suspicion')}`;
+
+const pathMechTag = (p) => [p.calm ? 'calm start' : '', p.pulseEvery ? 'surges' : '', p.silent ? 'no pings' : '', p.punctual > 1 ? 'on-time bonus' : '', p.earlyKeep > 0 ? 'early exit ok' : ''].filter(Boolean).map((t) => ` · ${t}`).join('');
 
 function offerPath() {
   S.phase = 'path';
@@ -136,6 +138,7 @@ function goAfk() {
   S.movedAt = 0;
   S.cap = Infinity;
   S.dragMin = 0;
+  S.pulseOn = false;
   S.aloneSince = null;
   S.flavor = '';
   S.fightPings = 0;
@@ -168,6 +171,8 @@ const vcFriend = () => {
 };
 const basePps = (over) => 6 * S.mult * (1 + S.mins / 25) * (1 + 0.2 * (S.round - 1)) * (over ? 2 : 1);
 
+// surge window = the last pulseLen minutes of every pulseEvery-minute cycle (game minutes)
+const pathSurge = (P) => !!(P.pulseEvery && P.pulseLen && S.mins % P.pulseEvery >= P.pulseEvery - P.pulseLen);
 function afkStep(dt) {
   const P = S.path || PATHS[0];
   const M = getMods();
@@ -185,8 +190,16 @@ function afkStep(dt) {
   S.clock += dm;
   if (S.run) rgAfkTick(dt);
   const h = Math.min(S.mins / 60, 4);
-  const pm = P.pointMult + (P.pointGrow || 0) * h;
-  const sm = P.susMult + (P.susGrow || 0) * h;
+  let pm = P.pointMult + (P.pointGrow || 0) * h;
+  let sm = P.susMult + (P.susGrow || 0) * h;
+  // path mechanics (all optional, see CONTENT.md "Path mechanics"): calm start, surge windows
+  if (P.calm && S.mins < S.promise * P.calm) sm = 0;
+  const surge = pathSurge(P);
+  if (surge) { pm *= P.pulsePts || 1; sm *= P.pulseSus || 1; }
+  if (surge !== S.pulseOn) {
+    S.pulseOn = surge;
+    sys(surge ? `🔥 surge: points x${P.pulsePts || 1}, suspicion x${P.pulseSus || 1}` : '🔥 surge over', surge ? 'bad' : '');
+  }
 
   const late = S.mins >= S.promise;
   const over = S.mins >= S.promise + M.graceMins; // grace minutes (items) delay when friends start counting
@@ -210,7 +223,7 @@ function afkStep(dt) {
   if (!over) {
     if (Math.random() < 0.05 * dt) { const cid = weightedCh(); const f = friendIn(cid); post(f, speak(f, 'chill'), { ch: cid }); }
   } else {
-    if (Math.random() < (0.12 + S.sus / 300) * (1 + 0.5 * (brbVis() - CT.visMid)) * S.rd.pingEnv * dt) {
+    if (!P.silent && Math.random() < (0.12 + S.sus / 300) * (1 + 0.5 * (brbVis() - CT.visMid)) * S.rd.pingEnv * dt) {
       const tier = S.sus < 35 ? 'low' : S.sus < 70 ? 'mid' : 'high';
       // friends spread out: the brb channel is the likeliest, but any channel can get the ping
       const cid = weightedCh();
@@ -220,7 +233,7 @@ function afkStep(dt) {
       post(f, line, { ch: cid, weight: tier === 'low' ? 0.8 : tier === 'mid' ? 1.1 : 1.4 });
     }
     // an ignored ping gets a follow-up somewhere else ("did you see my message in #x??")
-    if (S.follows < CT.follows && TEXT.length > 1 && Math.random() < 0.2 * dt) {
+    if (!P.silent && S.follows < CT.follows && TEXT.length > 1 && Math.random() < 0.2 * dt) {
       const p0 = S.pings.find((p) => !p.answered && !p.followed && !p.isFollow && S.mins - p.minsAtSend > 6);
       if (p0) {
         p0.followed = true;
@@ -328,7 +341,7 @@ function micEvent(id) {
   const lo = Array.isArray(ev.sus) ? ev.sus[0] : 2;
   const hi = Array.isArray(ev.sus) ? ev.sus[1] : 5;
   S.sus = Math.min(kickAt(), S.sus + rand(lo, hi));
-  sys(`🎙️ mic: ${ev.label || id}`);
+  sys(`${ev.icon || '🎙️'} ${ev.tag || 'mic'}: ${ev.label || id}`);
   post(vcFriend(), mixLine('micEvent', Array.isArray(ev.lines) && ev.lines.length ? () => pick(ev.lines) : null) || '...');
   if (S.path && S.path.id === 'hot-mic' && S.mins >= 30 && (id === 'flush' || id === 'chewing')) {
     S.elevator = true;
@@ -491,7 +504,13 @@ function bank(e, susBefore, factor = 1) {
   let base = S.pending * factor;
   if (factor < 1) parts.push('kicked mid-excuse ×0.5');
   parts.push(`AFK points ${fmtN(base)}`);
-  if (mins < S.promise && !e.forced) { base *= 0.25; parts.push('came back early ×0.25'); }
+  const PP = S.path || {};
+  if (mins < S.promise && !e.forced) {
+    const ek = PP.earlyKeep > 0 ? Math.min(1, PP.earlyKeep) : 0.25;
+    base *= ek;
+    parts.push(`came back early ×${ek}`);
+  }
+  if (PP.punctual > 1 && !e.forced && Math.abs(mins - S.promise) <= S.promise * 0.15) { base *= PP.punctual; parts.push(`⏰ on time ×${PP.punctual}`); }
   if (e.quiet) { base *= 1.25; parts.push('no-excuse confidence ×1.25'); }
 
   const M = getMods();

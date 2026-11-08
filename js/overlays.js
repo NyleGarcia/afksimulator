@@ -184,7 +184,9 @@ function shareButtons(getEntry) {
     });
     row.appendChild(sh);
   }
-  return row;
+  const box = el('div', 'share-box');
+  box.append(row, shareImageButtons(() => classicCardSpec(getEntry())));
+  return box;
 }
 
 // ---------- settings / leaderboard ----------
@@ -243,6 +245,7 @@ function showLeaderboard(tab) {
       c.addEventListener('click', () => copyText(GN.topShareText()));
       row.appendChild(c);
       nodes.push(row);
+      nodes.push(shareImageButtons(() => GN.topCardSpec()));
       const clr = el('button', 'btn danger', 'Clear Game Night leaderboard');
       let armed = false;
       let timer = 0;

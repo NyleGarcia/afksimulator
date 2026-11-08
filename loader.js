@@ -740,6 +740,13 @@
       if (e[f] == null) return;
       if (isNum(e[f]) && Math.abs(e[f]) <= 5) out[f] = e[f]; else warn(k, id, f, 'must be a number between -5 and 5; ignored');
     });
+    // gameplay mechanics (all optional): see CONTENT.md "Path mechanics"
+    [['calm', 0.1, 5], ['punctual', 1, 5], ['earlyKeep', 0.05, 1], ['pulseEvery', 5, 600], ['pulseLen', 1, 300], ['pulsePts', 0.1, 10], ['pulseSus', 0, 10]].forEach(function (m) {
+      if (e[m[0]] == null) return;
+      if (isNum(e[m[0]]) && e[m[0]] >= m[1] && e[m[0]] <= m[2]) out[m[0]] = e[m[0]]; else warn(k, id, m[0], 'must be a number ' + m[1] + '-' + m[2] + '; ignored');
+    });
+    if (e.silent != null) { if (typeof e.silent === 'boolean') out.silent = e.silent; else warn(k, id, 'silent', 'must be true or false; ignored'); }
+    if (out.pulseEvery && (!out.pulseLen || out.pulseLen >= out.pulseEvery)) { warn(k, id, 'pulseEvery', 'needs pulseLen smaller than pulseEvery; surge ignored'); delete out.pulseEvery; delete out.pulseLen; delete out.pulsePts; delete out.pulseSus; }
     if (e.modes != null) {
       var m = strList(k, id, 'modes', e.modes, 20);
       if (m) {
@@ -767,6 +774,10 @@
         if (Array.isArray(ev.sus) && ev.sus.length === 2 && isNum(ev.sus[0]) && isNum(ev.sus[1]) && ev.sus[0] <= ev.sus[1]) o.sus = [ev.sus[0], ev.sus[1]];
         else warn('pathEvent', id, 'sus', 'must be [min, max] numbers; using default');
       }
+      ['icon', 'tag'].forEach(function (f) {
+        if (ev[f] == null) return;
+        if (isStr(ev[f], f === 'icon' ? 8 : 16)) o[f] = ev[f].trim(); else warn('pathEvent', id, f, 'must be short text; ignored');
+      });
       if (ev.funny != null) { if (typeof ev.funny === 'boolean') o.funny = ev.funny; else warn('pathEvent', id, 'funny', 'must be true or false; ignored'); }
       if (ev.bonus != null) { if (isNum(ev.bonus) && ev.bonus >= 0) o.bonus = ev.bonus; else warn('pathEvent', id, 'bonus', 'must be a number >= 0; ignored'); }
       out[id] = o;
