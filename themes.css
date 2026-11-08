@@ -1,0 +1,192 @@
+/* Themes: override base :root vars via [data-theme]. Load AFTER style.css. */
+
+/* discord-dark: default, identical to base :root */
+:root[data-theme="discord-dark"] {
+  --bg: #2c2e34;
+  --bg-2: #25272c;
+  --bg-3: #1c1d21;
+  --bg-hover: #35373e;
+  --text: #e3e5e8;
+  --muted: #a9adb5;
+  --accent: #6b74f0;
+  --ok: #3ba55d;
+  --idle: #f0b232;
+  --danger: #ed4245;
+  --mention-bg: rgba(240, 178, 50, 0.1);
+  color-scheme: dark;
+}
+
+/* amoled: pure black */
+:root[data-theme="amoled"] {
+  --bg: #000000;
+  --bg-2: #000000;
+  --bg-3: #000000;
+  --bg-hover: #16171a;
+  --text: #f2f3f5;
+  --muted: #9a9ea6;
+  --accent: #7a82ff;
+  --ok: #3ba55d;
+  --idle: #f0b232;
+  --danger: #ff4d50;
+  --mention-bg: rgba(240, 178, 50, 0.12);
+  color-scheme: dark;
+}
+:root[data-theme="amoled"] .servers,
+:root[data-theme="amoled"] .channels,
+:root[data-theme="amoled"] .members,
+:root[data-theme="amoled"] .me-bar { border-color: #1a1b1e; }
+:root[data-theme="amoled"] .channels,
+:root[data-theme="amoled"] .members { border-left: 1px solid #1a1b1e; }
+:root[data-theme="amoled"] .server-name,
+:root[data-theme="amoled"] .chat-head,
+:root[data-theme="amoled"] .sus { border-bottom-color: #1a1b1e; }
+:root[data-theme="amoled"] .sus-bar { background: #16171a; }
+:root[data-theme="amoled"] .afk-panel {
+  background: linear-gradient(135deg, #0d0a18, #08101a);
+  border-color: #2a2250;
+}
+:root[data-theme="amoled"] .modal { background: rgba(0, 0, 0, .88); }
+:root[data-theme="amoled"] .modal-card { border: 1px solid #1f2023; box-shadow: none; }
+:root[data-theme="amoled"] .msg:hover { background: rgba(255,255,255,.04); }
+:root[data-theme="amoled"] .stat { background: #0c0c0e; }
+:root[data-theme="amoled"] .choice { background: #000; border-color: #26272b; }
+:root[data-theme="amoled"] .toast { background: #0c0c0e; border-color: #26272b; }
+
+/* light: AA contrast */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-2: #f2f3f5;
+  --bg-3: #e3e5e8;
+  --bg-hover: #d9dbe0;
+  --text: #1e1f22;
+  --muted: #4e5058;      /* 7.5:1 on white, 5.6:1 on --bg-hover */
+  --accent: #4752c4;     /* 6.9:1 on white */
+  --ok: #1a7f3c;
+  --idle: #8a5a00;
+  --danger: #c4262b;
+  --mention-bg: rgba(250, 168, 26, 0.18);
+  color-scheme: light;
+}
+:root[data-theme="light"] .dot.offline { background: #6d7380; }
+:root[data-theme="light"] .avatar .dot { border-color: var(--bg-3); }
+:root[data-theme="light"] .msg:hover { background: rgba(0,0,0,.04); }
+:root[data-theme="light"] .msg.system.bad { color: #b3181d; }
+:root[data-theme="light"] .msg.system.good { color: #14702f; }
+:root[data-theme="light"] .msg-text .at { background: rgba(71,82,196,.15); color: #2e3896; }
+:root[data-theme="light"] .afk-panel {
+  background: linear-gradient(135deg, #ece8fb, #e1ecfa);
+  border-color: #a79ad8;
+  color: var(--text);
+}
+:root[data-theme="light"] .afk-tag { background: #f0b232; color: #111; }
+:root[data-theme="light"] .afk-pending { color: #14702f; }
+:root[data-theme="light"] body.afk #meAvatar::after { color: #4752c4; }
+:root[data-theme="light"] .modal { background: rgba(30, 31, 34, .55); }
+:root[data-theme="light"] .modal-card { box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+:root[data-theme="light"] .modal-card h1.bad { color: #b3181d; }
+:root[data-theme="light"] .ach.got { background: rgba(26,127,60,.15); color: #14702f; }
+:root[data-theme="light"] .btn { background: #4752c4; color: #fff; }  /* 6.9:1 */
+:root[data-theme="light"] .toast { background: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+:root[data-theme="light"] .choice { background: #fff; border-color: #c4c7ce; }
+:root[data-theme="light"] .composer { color: var(--muted); }
+:root[data-theme="light"] .srv { background: var(--bg-2); }
+:root[data-theme="light"] .srv.active { background: var(--accent); color: #fff; }
+:root[data-theme="light"] .srv.add { color: var(--ok); }
+:root[data-theme="light"] .sus-fill.mid { background: #d98e00; }
+
+/* synthwave: neon purple/pink */
+:root[data-theme="synthwave"] {
+  --bg: #241b3d;
+  --bg-2: #1b1430;
+  --bg-3: #140d26;
+  --bg-hover: #35295a;
+  --text: #f4e9ff;
+  --muted: #b9a4e0;
+  --accent: #ff3fa4;
+  --ok: #2de2c4;
+  --idle: #ffd23f;
+  --danger: #ff4d6d;
+  --mention-bg: rgba(255, 63, 164, 0.12);
+  color-scheme: dark;
+}
+:root[data-theme="synthwave"] .srv.active { color: #1b0a2e; box-shadow: 0 0 12px rgba(255,63,164,.6); }
+:root[data-theme="synthwave"] .msg.mention { box-shadow: inset 2px 0 0 var(--accent); }
+:root[data-theme="synthwave"] .msg.system.bad { color: #ff7a9a; }
+:root[data-theme="synthwave"] .msg-text .at { background: rgba(255,63,164,.25); color: #ffc2e3; }
+:root[data-theme="synthwave"] .afk-panel {
+  background: linear-gradient(135deg, #3a1060, #0f2b5c);
+  border-color: #ff3fa4;
+  box-shadow: 0 0 18px rgba(255,63,164,.35), inset 0 0 20px rgba(45,226,196,.08);
+}
+:root[data-theme="synthwave"] body.afk #meAvatar::after { color: #2de2c4; }
+:root[data-theme="synthwave"] .modal { background: rgba(10, 4, 24, .82); }
+:root[data-theme="synthwave"] .modal-card { border: 1px solid #ff3fa4; box-shadow: 0 0 40px rgba(255,63,164,.35); }
+:root[data-theme="synthwave"] .modal-card h1.bad { color: #ff7a9a; }
+:root[data-theme="synthwave"] .ach.got { background: rgba(45,226,196,.18); color: #7ff3de; }
+:root[data-theme="synthwave"] .btn {
+  background: linear-gradient(90deg, #ff3fa4, #8b3dff);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.5);
+}
+:root[data-theme="synthwave"] .choice:hover { box-shadow: 0 0 10px rgba(255,63,164,.4); }
+:root[data-theme="synthwave"] .toast { box-shadow: 0 0 12px rgba(139,61,255,.4); }
+
+/* terminal: green on black, monospace */
+:root[data-theme="terminal"] {
+  --bg: #050805;
+  --bg-2: #030503;
+  --bg-3: #000000;
+  --bg-hover: #0f1f0f;
+  --text: #33ff66;
+  --muted: #1fb04a;
+  --accent: #33ff66;
+  --ok: #33ff66;
+  --idle: #ffcc33;
+  --danger: #ff4444;
+  --mention-bg: rgba(51, 255, 102, 0.1);
+  --radius: 0;
+  color-scheme: dark;
+}
+:root[data-theme="terminal"] body,
+:root[data-theme="terminal"] button {
+  font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+}
+:root[data-theme="terminal"] .srv,
+:root[data-theme="terminal"] .srv.active { border-radius: 0; border: 1px solid var(--muted); }
+:root[data-theme="terminal"] .srv.active { background: var(--accent); color: #000; }
+:root[data-theme="terminal"] .avatar { border-radius: 0; color: #000; }
+:root[data-theme="terminal"] .avatar .dot { border-radius: 0; }
+:root[data-theme="terminal"] .server-name,
+:root[data-theme="terminal"] .chat-head,
+:root[data-theme="terminal"] .sus { border-bottom-color: #0f3d1d; }
+:root[data-theme="terminal"] .channels,
+:root[data-theme="terminal"] .members { border-left: 1px solid #0f3d1d; }
+:root[data-theme="terminal"] .msg:hover { background: rgba(51,255,102,.06); }
+:root[data-theme="terminal"] .msg.mention { box-shadow: inset 2px 0 0 var(--accent); }
+:root[data-theme="terminal"] .msg.system.bad { color: #ff6666; }
+:root[data-theme="terminal"] .msg-text .at { background: rgba(51,255,102,.2); color: #aaffc0; }
+:root[data-theme="terminal"] .afk-panel {
+  background: #021002;
+  border: 1px solid #33ff66;
+}
+:root[data-theme="terminal"] .afk-tag { background: var(--idle); color: #000; }
+:root[data-theme="terminal"] body.afk #meAvatar::after { color: #33ff66; }
+:root[data-theme="terminal"] .modal { background: rgba(0, 0, 0, .9); }
+:root[data-theme="terminal"] .modal-card { border: 1px solid #33ff66; border-radius: 0; box-shadow: none; }
+:root[data-theme="terminal"] .modal-card h1.bad { color: #ff6666; }
+:root[data-theme="terminal"] .ach { border-radius: 0; }
+:root[data-theme="terminal"] .ach.got { background: rgba(51,255,102,.15); color: #33ff66; }
+:root[data-theme="terminal"] .btn { background: #33ff66; color: #000; border-radius: 0; }  /* 14:1 */
+:root[data-theme="terminal"] .toast { border-radius: 0; border-color: #0f3d1d; }
+:root[data-theme="terminal"] .stat,
+:root[data-theme="terminal"] .choice,
+:root[data-theme="terminal"] .composer { border-radius: 0; }
+:root[data-theme="terminal"] .choice { border-color: #0f3d1d; }
+
+/* keep alt/danger buttons distinct from themed primary .btn (specificity 0,4,0 > theme .btn 0,3,0) */
+:root[data-theme] .btn.alt { background: var(--bg-2); background-image: none; color: var(--text); text-shadow: none; border: 1px solid var(--bg-hover); }
+:root[data-theme] .btn.danger { background: #b3252a; background-image: none; color: #fff; text-shadow: none; }
+
+/* light theme: darken bright name hues for contrast */
+:root[data-theme="light"] .msg-name,
+:root[data-theme="light"] .member-name { filter: brightness(.6) saturate(1.3); }

@@ -32,6 +32,7 @@ button { font: inherit; color: inherit; }
   grid-template-columns: 72px 230px 1fr 230px;
   height: 100vh;
   height: 100dvh;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 /* ---- server rail ---- */
@@ -60,6 +61,8 @@ button { font: inherit; color: inherit; }
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 .server-name {
   padding: 14px 16px;
@@ -80,11 +83,13 @@ button { font: inherit; color: inherit; }
   color: var(--muted);
 }
 .ch.active { background: var(--bg-hover); color: var(--text); }
-.vc-members { padding-left: 32px; flex: 1; overflow: auto; }
+.vc-members { padding-left: 32px; overflow: auto; }
+.vc-members:empty { display: none; }
 .vc-member { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--muted); font-size: 14px; }
 .vc-member .avatar { width: 22px; height: 22px; font-size: 11px; }
 
 .me-bar {
+  margin-top: auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -318,8 +323,14 @@ h3 { margin: 16px 0 4px; font-size: 13px; color: var(--muted); letter-spacing: .
   .members { display: none; }
 }
 @media (max-width: 760px) {
-  #app { grid-template-columns: 1fr; }
-  .servers, .channels { display: none; }
+  #app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .servers { display: none; }
+  /* keep a compact me-bar + token strip on phones; hide the channel lists */
+  .channels { overflow: visible; }
+  .channels > .server-name, .channels > .ch-group, .channels > #textChans, .channels > #voiceChans { display: none; }
+  .inv-strip { margin: 4px 8px; padding-top: 0; }
+  .inv-strip:empty { display: none; }
+  .me-bar { margin-top: 0; }
   .msg.system { padding-left: 16px; }
   .afk-clock { font-size: 26px; }
   .composer { margin: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
@@ -333,3 +344,63 @@ h3 { margin: 16px 0 4px; font-size: 13px; color: var(--muted); letter-spacing: .
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- settings / leaderboard / share ---- */
+.btn-row { display: flex; gap: 8px; margin: 8px 0 12px; }
+.btn-row .btn { flex: 1; }
+.btn.alt { background: var(--bg-2); color: var(--text); border: 1px solid var(--bg-hover); }
+.btn.danger { background: #b3252a; margin-top: 8px; }
+.btn + .btn { margin-top: 8px; }
+.btn-row .btn + .btn { margin-top: 0; }
+.field-label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+.name-input {
+  width: 100%; padding: 10px 12px; border-radius: var(--radius);
+  border: 1px solid var(--bg-hover); background: var(--bg-2); color: var(--text); font: inherit;
+}
+.theme-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 16px; }
+.theme-picker .btn { margin-top: 0; }
+.me-name[role="button"] { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scores td:nth-child(2) { font-weight: 700; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theme-btn[aria-pressed="true"] { outline: 2px solid var(--text); outline-offset: 2px; font-weight: 700; }
+.theme-btn[aria-pressed="true"]::before { content: "\2713\00a0"; }
+
+/* ---- paths / server mode ---- */
+.chan-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.chip {
+  font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+  background: var(--bg-2); color: var(--muted); border: 1px solid var(--bg-hover);
+  white-space: nowrap;
+}
+.chip[hidden] { display: none; }
+.chip.timeout { color: var(--idle); }
+.chip.notimeout { color: var(--ok); }
+.afk-path { font-size: 13px; margin-top: 6px; color: var(--text); }
+.afk-status { font-size: 12px; margin-top: 2px; color: var(--muted); }
+.afk-status:empty { display: none; }
+
+/* ---- content-driven channels, residents, shop ---- */
+.ch.joined { color: var(--text); }
+.vc-res { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--muted); font-size: 14px; opacity: .9; }
+.vc-res .avatar { width: 22px; height: 22px; font-size: 11px; }
+.vc-res-info { min-width: 0; line-height: 1.2; }
+.res-timer { font-size: 11px; color: var(--muted); font-style: italic; }
+.msg.system.resident { font-size: 13px; opacity: .85; }
+.inv-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: auto 8px 6px; padding-top: 6px; font-size: 13px; }
+.inv-strip + .me-bar { margin-top: 0; }
+.inv-tokens { color: var(--idle); font-weight: 700; margin-right: 4px; }
+.inv-item { padding: 1px 6px; border-radius: 999px; background: var(--bg-3); color: var(--text); cursor: default; }
+.inv-item.on { outline: 1px solid var(--ok); }
+.shop-link {
+  align-self: flex-start;
+  background: none; border: 1px solid var(--bg-hover); border-radius: var(--radius);
+  color: var(--muted); padding: 4px 10px; cursor: pointer; font-size: 13px;
+}
+.shop-link:hover { color: var(--text); border-color: var(--accent); }
+.shop { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 16px; max-height: 50vh; overflow: auto; }
+.shop-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--radius); background: var(--bg-2); }
+.shop-info { flex: 1; min-width: 0; }
+.shop-name { font-weight: 700; }
+.shop-desc { font-size: 13px; color: var(--muted); }
+.shop-meta { font-size: 12px; color: var(--muted); font-style: italic; }
+.shop-item .shop-buy { flex: none; width: auto; min-width: 96px; white-space: nowrap; padding: 8px 12px; margin-top: 0; }
+.shop-buy:disabled { opacity: .5; cursor: not-allowed; }
