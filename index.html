@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AFK Simulator</title>
+  <meta name="description" content="You are comanderson. Say brb. Don't come back.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💤</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <nav class="servers" aria-hidden="true">
+      <div class="srv active">TB</div>
+      <div class="srv">🎮</div>
+      <div class="srv">📚</div>
+      <div class="srv add">+</div>
+    </nav>
+
+    <aside class="channels">
+      <header class="server-name">the boys ▾</header>
+      <div class="ch-group">TEXT CHANNELS</div>
+      <div class="ch active"># general</div>
+      <div class="ch"># memes</div>
+      <div class="ch"># clips</div>
+      <div class="ch-group">VOICE CHANNELS</div>
+      <div class="ch">🔊 squad vc</div>
+      <div id="vcMembers" class="vc-members"></div>
+      <div class="me-bar">
+        <div id="meAvatar" class="avatar me">C<span class="dot online"></span></div>
+        <div class="me-info">
+          <div class="me-name">comanderson</div>
+          <div id="meStatus" class="me-status">Online</div>
+        </div>
+        <button id="muteBtn" class="icon-btn" title="Toggle sound">🔔</button>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <header class="chat-head">
+        <span class="chan"># general</span>
+        <div class="hud">
+          <span>Score <b id="hudScore">0</b></span>
+          <span>Round <b id="hudRound">1</b></span>
+          <span>Combo <b id="hudCombo">x0</b></span>
+          <span>Best <b id="hudBest">0</b></span>
+        </div>
+      </header>
+      <div class="sus" title="How done your friends are with you">
+        <span class="sus-label">Friend suspicion</span>
+        <div class="sus-bar" role="progressbar" aria-label="Friend suspicion" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="susFill" class="sus-fill"></div></div>
+        <span id="susPct" class="sus-pct">0%</span>
+      </div>
+
+      <div id="messages" class="messages" aria-live="polite"></div>
+
+      <section id="afkPanel" class="afk-panel" role="status" hidden>
+        <div class="afk-top">
+          <span class="afk-tag">AFK</span>
+          <span id="afkClock" class="afk-clock">0m</span>
+        </div>
+        <div class="afk-row">
+          <span id="afkPending" class="afk-pending">+0 pending</span>
+          <span id="afkPromise" class="afk-promise"></span>
+        </div>
+        <div id="afkCombo" class="afk-combo"></div>
+        <div class="afk-hint">Touch nothing. Any key, click or mouse move = you're back.</div>
+      </section>
+
+      <section id="actions" class="actions" aria-live="polite"></section>
+
+      <div class="composer"><span id="composerText">Message #general</span></div>
+    </main>
+
+    <aside class="members">
+      <div id="memberHead" class="ch-group">ONLINE — 6</div>
+      <div id="memberList"></div>
+    </aside>
+  </div>
+
+  <div id="modal" class="modal">
+    <div id="modalCard" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle"></div>
+  </div>
+  <div id="toasts" class="toasts" role="status"></div>
+
+  <script src="game.js"></script>
+</body>
+</html>

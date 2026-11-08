@@ -1,0 +1,4 @@
+.tmp/
+scratch/
+.env
+.DS_Store
