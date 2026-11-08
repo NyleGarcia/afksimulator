@@ -11,6 +11,7 @@ No build step: edit a file, refresh the page.
 | `content/paths.js` | the "where do you go AFK" choices, mic events, path chatter |
 | `content/dialog.js` | brb phrases, excuses, and the shared chat lines |
 | `content/themes.js` | the theme list (colors live in `themes.css`) |
+| `content/packs/<id>/` | optional **content packs**: a whole alternative server (see "Content packs" below) |
 
 ## How loading works
 
@@ -31,6 +32,8 @@ Each file is a classic `<script>` that adds its data to `window.AFK_CONTENT`, fo
 
 Text tokens you can use in posted chat lines (not in button labels, resident status or item/path names, which are shown as plain text): `{me}` your handle, `{p}` the time you promised, `{t}` how long you have been away.
 All text is shown as plain text (never HTML).
+Substitution is a single pass: `{me}`, `{p}` and `{t}` are filled once, and any other `{slot}` still left in a posted line is stripped, so a raw token is never shown.
+Pack generators fill their own slots (`{place}`, `{ship}`, ...) first, then the same pass runs.
 
 ## Characters (`content/characters.js`)
 
@@ -118,6 +121,48 @@ can watch it change during a run; raise `timerDayMins` to 1440 for real days.
   stay in their own. If you list nobody, all friends follow you.
 - The AFK channel's own `mods` apply while you are parked in it.
 - If a type is missing (no text channel, no voice channel, no AFK channel) the game adds a default one.
+
+### Text channels are playable (multi-channel chat)
+
+Text channels are switchable (sidebar, the strip under the header on phones, `Alt+Up/Down`, `Alt+Shift+Up/Down` for the
+previous/next unread). Each keeps its own history, an unread dot and a red @mention badge. These optional fields
+(text channels only; bad values are warned about and ignored) drive the game:
+
+```js
+{
+  id: 'org-announcements', name: 'org-announcements', type: 'text',
+  visibility: 0.95,          // 0..1, how closely friends watch it (default 0.5)
+  busyness: 0.2,             // 0..1, how much friend chatter lands here (default 0.5)
+  muted: false,              // starts muted (default false); the player can mute/unmute with M or the bell (max 3)
+  muteDelay: [4, 12],        // game minutes before a ping in a muted channel reaches you (default [4, 12])
+  slowmodeSec: 20,           // real seconds you cannot post again here after a quick reply or excuse (default 0)
+  replies: [                 // quick replies for answering pings; t = text (<= 60), r = [min, max] suspicion removed
+    { t: 'acknowledged', r: [3, 9] },          // r may be negative (a bad reply); default [1, 6]
+    { t: 'o7', r: [1, 5] }
+  ]                          // 3 of them are offered at a time; no list = the built-in defaults
+}
+```
+
+How it plays:
+- **Brb channel.** The brb is posted in the channel you are viewing when you pick it. A busy channel (high `visibility`)
+  means more pings and ~2.5% faster suspicion; a quiet one means ~15% slower suspicion and fewer pings, but they scatter
+  and pings in other channels hit harder (x1.3) when almost nobody saw the brb.
+- **Pings.** While you are past your promise, friends post across channels (the brb channel is twice as likely, weighted by
+  `busyness`). A line that @mentions you is a ping tied to that channel. A friend may follow up in another channel
+  (max 3 per AFK round; the counter resets each round). Pings can only be answered in the channel they were sent to; switching to a channel (seen) or answering
+  elsewhere does not clear them.
+- **Muted channels.** A ping there only shows up after `muteDelay` game minutes. If you come back before that window has
+  passed it is forgiven; once delivered (or older than `muteDelay[1]`) it counts.
+- **On return** with pings waiting you get a timed **ping triage** (about 7s + 3.5s per pinged channel): pick which channel
+  to answer first, pick a quick reply (`replies`), repeat, or skip. Then the usual excuse step (posted in the channel you
+  are in; `slowmodeSec` can block it right after a reply there, "back" is never blocked).
+- **Left on read.** Each unanswered ping costs `1.6 x weight x age x (0.6 + visibility)` suspicion (x1.25 if you looked at the
+  channel), answered pings only a sliver that grows with how long you took. Pings are summed biggest first with x0.85 per
+  extra ping, capped at 14, softer in rounds 1-2, and never push suspicion past 90% by themselves. Being dragged out halves
+  it. The summary line and the bank toast show it. Quick replies also refund a little (max 6).
+- Saved scores gain an optional `f` (channel you said brb in most) and the Discord share text then ends the stats with
+  ` · fav #channel`; older entries render as before.
+- Tunables live in the `CT` constant in `game.js`.
 
 ## Items (`content/items.js`)
 
@@ -240,4 +285,79 @@ If you typo a field you get a warning like `[afk-content] item "fake-lag" field 
 ## Tests
 
 `?debug=1` exposes `window.__afk` (state, `tick(minutes)`, `go(pathId)`, `buy(id)`, `mods()`, `setChannel(id)`, `resident()`,
-`stats.digs`) for headless tests.
+`stats.digs`, and for channels `say(channelId, text)`, `switchCh(id)`, `mute(id)`, `skipTriage()`, `lorPreview()`, `favCh()`)
+for headless tests. Without the flag nothing is exposed.
+
+
+## Content packs (`content/packs/<id>/`)
+
+A pack replaces the *server*: name, channels, characters, residents, shop items, brb/excuse phrases, chat lines and extra
+achievements. The built-in server is the pack `classic` ("The Boys (classic)"); everything in `content/*.js` above is classic.
+Players pick the pack in **Settings** or on the **start screen**; it is stored in `localStorage` as `afksim.pack`.
+Switching starts a fresh run state. Score, tokens and achievements carry over; shop inventory is kept per pack
+(`inv` for classic, `inv-<id>`). Paths and themes are shared by every pack. Anything a pack leaves out falls back to classic.
+
+Shipped: `content/packs/bobernet/` ("BoberNet", a Star Citizen org parody).
+
+### Manifest
+
+`content/packs/<id>/manifest.js` registers the pack (classic script):
+
+```js
+(window.AFK_PACK_MANIFESTS = window.AFK_PACK_MANIFESTS || []).push({
+  id: 'bobernet',                      // required, unique, letters/digits/-/_ (max 32). 'classic' is reserved
+  name: 'BoberNet (Star Citizen)',     // required, label in the pack picker (max 40)
+  server: 'BoberNet',                  // sidebar header + share text ("in BoberNet"); default data.server.name, then name
+  base: 'content/packs/bobernet/',     // optional folder for the files below (default content/packs/<id>/)
+  files: ['data.js', 'dialog.js'],     // core files (small). Add them as <script> tags in index.html, or the game loads them on select
+  lazy: ['bulk.js'],                   // heavy files: never block first render, loaded after first paint and only while the pack is active
+  requires: 4                          // minimum content-system version (this game is 4); a pack needing more is skipped with a warning
+});
+```
+
+Add the manifest and the core `files` as `<script>` tags in `index.html` before `loader.js` (so the pack is ready at first paint).
+A pack whose files are *not* listed there is loaded on demand the first time it is selected.
+`lazy` files are never listed in `index.html`.
+
+### Files (each sets one key of `window.AFK_PACKS[id]`)
+
+| Key | Shape |
+| --- | --- |
+| `data` | `{ server: { name, icon, tagline }, characters[], residents[], channels[], items[], achievements[] }`. Same entry shapes as classic (see above); `lines` may be a single string per key, a resident may use `timerDays: [min, max]` and `statusLines[]` |
+| `dialog` | `{ brb[{t,p,m}], excuses[{t,r}], lines{ask,ok,chill,low,mid,high,good,meh,bad,reused,early,kickAfter,hype,kickReason,...}, orgFightPings[], missedFight[], welcomeBack[] }` |
+| `pools` | slot values for the generator: `{ place: [ 'text' \| { v, tags?, w? } ], ship: [...], ... }` |
+| `templates` | generated lines: `{ mood: { ask: [{t,tags?,w?}], ... }, orgFight: [...], pvpJab: [...], returnFight, welcomeBack, leftOnRead, cargoRun, claimTimer, crash30k, elevatorDoom, wen, misc }`. A template uses `{place}`-style slots plus `{me}` `{p}` `{t}`; `{place:tag}` filters a pool by tag |
+| `generate` | `function (template, pools, rng, recentSet) -> string` that fills the slots |
+| `parodyOrgs` | `[{ id, name, tag, lines[], taunts[] }]`: rival/neutral orgs mentioned in pings and jabs; use `{place}`/`{activity}` for locations, never `{p}` |
+| `bulk` | (lazy) `{ ask, chill, low, mid, high, good, meh, bad, reused, kickAfter, orgFight, pvpJab, missedFight, welcomeBack, brb, excuse, micEvent, trade, serverlore, resident: string[] }`, plain strings using `{me}` `{p}` `{t}` only; each string must be 2-160 chars with no control characters or `cleanBulk` drops it |
+
+Do not put real organisation or person names in any file the game loads. Keep research notes in a `docs/` folder inside the pack (not loaded).
+
+### How a line is chosen
+
+For each category (ask, ok, chill, low, mid, high, good, meh, bad, reused, early, kickAfter, orgFight, pvpJab, missedFight, welcomeBack, micEvent,
+trade, serverlore, resident) the game draws a source: **hand-written 35%** (character lines + `dialog.lines`), **generated 35%**
+(`templates` + `pools` + `generate`) and **bulk 30%**. A source that does not exist (no templates for that category, bulk not loaded yet) gives its share to the others.
+Character **digs** still come first, at their usual probabilities (40%, 65% for a rival). The last 60 lines are remembered and avoided.
+Plain-string `bulk.brb` / `bulk.excuse` entries are turned into options on the fly: `p` (minutes) comes from numbers or keywords in the text
+(`2 min`, `5`, `an hour`, `dinner`; otherwise random 2-20), `m` falls from 1.6 (a minute) to 0.9 (an hour or more) with the promise,
+and an excuse gets a random `r` inside -10..45. The reuse penalty is keyed by the text.
+
+While AFK a pack's friends occasionally post an org-fight ping (sometimes about a rival org: `<org> is camping {place}`, plus one of its taunts),
+trade and server-lore chatter, and, at mid/high suspicion, pvp jabs. Returning after an unanswered ping gets `missedFight` / `welcomeBack` lines and a little suspicion.
+
+### Achievements
+
+Pack `achievements` entries are `{ id, name, desc, hint }`. Unlock conditions live in the game, keyed by id: `30k` (AFK 8h20m of game time), `insured` (run with
+the `insurance-claim-form` item), `elevator-of-doom` (mic event `flush`/`chewing` on the hot-mic path past 30 min), `missed-the-org-fight`
+(return after an unanswered org-fight ping), `solo-idris` (3 pvp jabs about an Idris in one run). Entries whose id has no condition are ignored; `roommate` is already built in.
+
+### How to make your own pack
+
+1. Copy `content/packs/bobernet/` to `content/packs/<yourid>/`, delete the files you do not need (only `data.js` is required) and edit `manifest.js` (new `id`, `name`, `server`, `files`).
+2. In each file replace `bobernet` with your id (`window.AFK_PACKS.<yourid>.data = {...}`).
+3. Fill `data.js` (server, 3+ friends, optional residents, channels with one `isAfk` voice channel, items). Add `dialog.js` for brb/excuse/lines (3+ of each, or classic's are used).
+4. Optional extras: `pools.js` + `templates.js` + `generate.js` for generated lines, `parody-orgs.js`, and a big `bulk.js` listed under `lazy`.
+5. Add `<script>` tags for `manifest.js` and your core files in `index.html` before `loader.js`.
+6. Open the page with `?debug=1`. Bad entries are skipped with a console warning prefixed by the pack id, for example
+   `[afk-content] [mypack] item "x" field "price": ...`; `AFK_RESOLVED.counts.packs` shows how many packs registered, and the pack picker appears in Settings once a second pack is valid.

@@ -2,3 +2,14 @@
 scratch/
 .env
 .DS_Store
+node_modules/
+*.log
+
+# Claude Code local config
+.claude/
+
+# BoberNet pack: private reference notes (names real orgs) and raw generation parts.
+# Only bulk.js (the merged, deduped result) ships.
+content/packs/bobernet/docs/
+content/packs/bobernet/bulk/
+content-packs/

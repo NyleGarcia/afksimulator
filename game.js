@@ -74,11 +74,28 @@
   let theme = applyTheme(store.get('theme', THEMES[0].id));
   const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const firstCh = (n) => (Array.from(String(n))[0] || '?').toUpperCase();
-  // single-pass token substitution: replaced text is never re-scanned
-  const meTok = (s) => String(s).replace(/\{(me|p|t)\}/g, (_, k) => (k === 'me' ? ME.name : k === 'p' ? fmtMins(S.promise) : fmtMins(S.mins)));
+  // single-pass token substitution: {me} {p} {t} are filled once (replaced text is never re-scanned) and any other
+  // {slot} that is still left over is stripped, so a raw token is never shown
+  const TOKEN_RE = /\{[A-Za-z_]\w*(?::[^{}]*)?\}/g;
+  const tidy = (s, stripped) => {
+    let o = s.replace(/\bthe\s+the\b/gi, 'the').replace(/[ \t]{2,}/g, ' ');
+    if (stripped) o = o.replace(/[ \t]+([.,!?;:])/g, '$1');
+    return o.trim();
+  };
+  const meTok = (s) => {
+    let stripped = false;
+    const o = String(s).replace(TOKEN_RE, (m) => {
+      if (m === '{me}') return ME.name;
+      if (m === '{p}') return fmtMins(S.promise);
+      if (m === '{t}') return fmtMins(S.mins);
+      stripped = true;
+      return '';
+    });
+    return tidy(o, stripped);
+  };
   const escMd = (x) => String(x).replace(/[\\*_~`|>[\]()#-]/g, '\\$&');
   const mentionRe = () => new RegExp('(@' + escRe(ME.name) + ')', 'i');
-  // characters (content/characters.js)
+  // ---------- content sets: the classic server (content/*) and packs (content/packs/*) ----------
   const DEFAULT_FRIENDS = [
     { id: 'brody', name: 'Brody', color: '#e67e22' },
     { id: 'kev', name: 'kev', color: '#4aa3df' },
@@ -86,27 +103,20 @@
     { id: 'dani', name: 'dani', color: '#e84393' },
     { id: 'xxsniperxx', name: 'xXSniperXx', color: '#a77bd6' },
   ].map((c) => ({ ...c, role: 'friend', tags: [], rival: false, lines: {}, digs: [] }));
-  const CHARS = Array.isArray(R.characters) ? R.characters : [];
-  const FRIENDS = CHARS.filter((c) => c.role === 'friend').length ? CHARS.filter((c) => c.role === 'friend') : DEFAULT_FRIENDS;
-  const RESIDENTS = CHARS.filter((c) => c.role === 'resident');
-  const BOTS = CHARS.filter((c) => c.role === 'bot');
 
-  // channels (content/channels.js): first text channel = chat, first non-afk voice = start channel, first isAfk voice = afk channel
-  const chanList = Array.isArray(R.channels) ? R.channels : [];
-  const mkChan = (o) => ({ icon: o.type === 'text' ? '#' : '🔊', isAfk: false, members: [], mods: {}, desc: '', ...o });
-  const TEXT = chanList.filter((c) => c.type === 'text');
-  const VOICE = chanList.filter((c) => c.type === 'voice' && !c.isAfk);
-  const AFK_CH = chanList.find((c) => c.type === 'voice' && c.isAfk) || mkChan({ id: 'afk', name: 'afk', type: 'voice', isAfk: true });
-  if (!TEXT.length) TEXT.push(mkChan({ id: 'general', name: 'general', type: 'text' }), mkChan({ id: 'memes', name: 'memes', type: 'text' }), mkChan({ id: 'clips', name: 'clips', type: 'text' }));
-  if (!VOICE.length) VOICE.push(mkChan({ id: 'squad-vc', name: 'squad vc', type: 'voice' }));
+  // channels: first text channel = chat, first non-afk voice = start channel, first isAfk voice = afk channel
+  // text channels also carry chat gameplay fields (see CONTENT.md "Channels"); missing ones get these defaults
+  const TEXT_DEF = { visibility: 0.5, busyness: 0.5, muted: false, muteDelay: [4, 12], slowmodeSec: 0, replies: null };
+  const mkChan = (o) => ({ icon: o.type === 'text' ? '#' : '🔊', isAfk: false, members: [], mods: {}, desc: '', ...(o.type === 'text' ? TEXT_DEF : {}), ...o });
   const chanLabel = (c) => `${c.icon} ${c.name}`;
-  const chatLabel = () => (TEXT[0].icon === '#' ? '#' + TEXT[0].name : chanLabel(TEXT[0]));
+  const labelOf = (c) => (c.icon === '#' ? '#' + c.name : chanLabel(c));
+  const chatLabel = () => labelOf(activeCh());
   const composerIdle = () => `Message ${chatLabel()}`;
   const curVc = () => VOICE.find((c) => c.id === S.chan) || VOICE[0];
   const sideText = () => (TEXT[1] || TEXT[0]);
 
   // p = promised minutes, m = points multiplier
-  let BRB = [
+  const BASE_BRB = [
     { t: 'brb', p: 5, m: 1.0 },
     { t: 'brb 2 min', p: 2, m: 1.35 },
     { t: 'one sec', p: 1, m: 1.5 },
@@ -124,7 +134,7 @@
 
   // r = suspicion removed [min, max]
   const QUIET = { t: 'back', r: [2, 8], quiet: true };
-  let EXCUSES = [
+  const BASE_EXCUSES = [
     { t: 'sorry my internet died', r: [15, 35] },
     { t: 'my mom needed help with groceries', r: [15, 30] },
     { t: 'fell asleep lol', r: [5, 40] },
@@ -142,7 +152,7 @@
     { t: 'bro i was literally touching grass', r: [10, 30] },
   ];
 
-  let LINES = {
+  const BASE_LINES = {
     ask: ['yo @{me} u ready?', 'we queueing in 1', '@{me} hop in vc', 'ok last game for real', 'everyone ready?', '@{me} you on point this round', 'aight lets go'],
     ok: ['k', 'ok hurry', 'np', 'fast pls', 'kk', 'ok', 'sure'],
     chill: ['ok', 'lol', 'np take ur time', 'anyone wanna 1v1 while we wait', "i'm getting snacks then", 'ye'],
@@ -156,17 +166,51 @@
     early: ['wait you actually came back??', 'who are you', 'huh. ok'],
     kickAfter: ['finally', 'anyway', 'who wants to play', 'rip bozo'],
   };
+  const BASE = {
+    friends: DEFAULT_FRIENDS,
+    TEXT: [mkChan({ id: 'general', name: 'general', type: 'text' }), mkChan({ id: 'memes', name: 'memes', type: 'text' }), mkChan({ id: 'clips', name: 'clips', type: 'text' })],
+    VOICE: [mkChan({ id: 'squad-vc', name: 'squad vc', type: 'voice' })],
+    AFK_CH: mkChan({ id: 'afk', name: 'afk', type: 'voice', isAfk: true }),
+    items: [], BRB: BASE_BRB, EXCUSES: BASE_EXCUSES, LINES: BASE_LINES, residents: [], bots: [],
+  };
 
-  const D = R.dialog;
-  if (D) {
-    if (Array.isArray(D.BRB) && D.BRB.length >= 3) BRB = D.BRB;
-    if (Array.isArray(D.EXCUSES) && D.EXCUSES.length >= 3) EXCUSES = D.EXCUSES;
-    if (D.LINES && typeof D.LINES === 'object') {
-      const merged = { ...LINES };
-      Object.keys(D.LINES).forEach((k) => { if (Array.isArray(D.LINES[k]) && D.LINES[k].length) merged[k] = D.LINES[k]; });
-      LINES = merged;
-    }
+  // src = validated content (R for classic, R.packs[id] for a pack); anything missing falls back to fb
+  function mkContent(src, fb, owner) {
+    const chars = Array.isArray(src.characters) ? src.characters : [];
+    const friends = chars.filter((c) => c.role === 'friend');
+    const chans = Array.isArray(src.channels) ? src.channels : [];
+    const text = chans.filter((c) => c.type === 'text');
+    const voice = chans.filter((c) => c.type === 'voice' && !c.isAfk);
+    const D = src.dialog || {};
+    const lines = { ...fb.LINES };
+    if (D.LINES && typeof D.LINES === 'object') Object.keys(D.LINES).forEach((k) => { if (Array.isArray(D.LINES[k]) && D.LINES[k].length) lines[k] = D.LINES[k]; });
+    const ownItems = Array.isArray(src.items) && src.items.length;
+    return {
+      friends: friends.length ? friends : fb.friends,
+      residents: chars.filter((c) => c.role === 'resident'),
+      bots: chars.filter((c) => c.role === 'bot'),
+      TEXT: text.length ? text.map((c) => ({ ...TEXT_DEF, ...c })) : fb.TEXT,
+      VOICE: voice.length ? voice : fb.VOICE,
+      AFK_CH: chans.find((c) => c.type === 'voice' && c.isAfk) || fb.AFK_CH,
+      items: ownItems ? src.items : fb.items,
+      itemsOwner: ownItems ? owner : fb.itemsOwner || 'classic',
+      BRB: Array.isArray(D.BRB) && D.BRB.length >= 3 ? D.BRB : fb.BRB,
+      EXCUSES: Array.isArray(D.EXCUSES) && D.EXCUSES.length >= 3 ? D.EXCUSES : fb.EXCUSES,
+      LINES: lines,
+    };
   }
+  const CLASSIC = mkContent(R, BASE, 'classic');
+  const CONTENTS = { classic: CLASSIC };
+
+  // the active content set (swapped by applyPack)
+  let FRIENDS, RESIDENTS, BOTS, TEXT, VOICE, AFK_CH, ITEMS, BRB, EXCUSES, LINES, INV_KEY;
+  function useContent(c) {
+    FRIENDS = c.friends; RESIDENTS = c.residents; BOTS = c.bots;
+    TEXT = c.TEXT; VOICE = c.VOICE; AFK_CH = c.AFK_CH;
+    ITEMS = c.items; BRB = c.BRB; EXCUSES = c.EXCUSES; LINES = c.LINES;
+    INV_KEY = c.itemsOwner === 'classic' ? 'inv' : 'inv-' + c.itemsOwner;
+  }
+  useContent(CLASSIC);
   const lineOr = (k, d) => (Array.isArray(LINES[k]) && LINES[k].length ? pick(LINES[k]) : d);
 
   // ---------- paths (paths.js) ----------
@@ -182,7 +226,7 @@
   const THRESHOLDS = [5, 15, 60];
   const FORCED = { t: '', forced: true, r: [0, 0] };
 
-  const ACH = {
+  const ACH_BASE = {
     micro: { name: 'Microwave Break', desc: 'AFK 10 min', test: (r) => r.mins >= 10 },
     milk: { name: 'Went To Get Milk', desc: 'AFK 1 hour', test: (r) => r.mins >= 60 },
     grass: { name: 'Touched Grass', desc: 'AFK 3 hours', test: (r) => r.mins >= 180 },
@@ -198,6 +242,9 @@
     roommate: { name: 'Roommate', desc: 'Get moved to AFK while a resident is there, 3 times', test: (r) => r.roommates >= 3 },
   };
 
+  // achievements: the base set is always on; the active pack adds its own (see PACK_ACH_RULES)
+  let ACH = { ...ACH_BASE };
+
   // ---------- state ----------
   const S = {};
   let gen = 0; // bumps on reset, cancels stale timeouts
@@ -208,11 +255,10 @@
 
   // ---------- items, tokens, mods (content/items.js) ----------
   // Tokens: 1 token per 100 points banked (running total per run, so no remainder is lost). Persisted.
-  const ITEMS = Array.isArray(R.items) ? R.items : [];
   const itemById = (id) => ITEMS.find((i) => i.id === id);
   const itemMax = (i) => (i.stackable ? i.max || 5 : 1);
   function loadInv() {
-    const raw = store.get('inv', {});
+    const raw = store.get(INV_KEY, {});
     const out = {};
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       Object.keys(raw).forEach((id) => {
@@ -223,7 +269,7 @@
     }
     return out;
   }
-  let inv = loadInv();
+  let inv = {}; // set per content set by applyPack()
   let tokens = (() => { const t = store.get('tokens', 0); return Number.isFinite(t) && t > 0 ? Math.floor(t) : 0; })();
   const itemCount = () => Object.keys(inv).length;
 
@@ -255,7 +301,7 @@
     tokens -= i.price;
     inv[id] = have + 1;
     store.set('tokens', tokens);
-    store.set('inv', inv);
+    store.set(INV_KEY, inv);
     renderInv();
     return { ok: true };
   }
@@ -276,14 +322,14 @@
       }
     });
     if (used.length) {
-      store.set('inv', inv);
+      store.set(INV_KEY, inv);
       sys(`${used.map((i) => i.icon + ' ' + i.name).join(', ')} active this run`, 'good');
     }
     renderInv();
   }
 
   // ---------- character lines + digs ----------
-  const stats = { digs: 0 };
+  const stats = { digs: 0, src: { hand: 0, gen: 0, bulk: 0 }, first: { hand: 0, gen: 0, bulk: 0 } };
   // a character's own lines for key k are used half the time when they have some, else the shared pool
   const say = (f, k) => {
     const own = f && f.lines && f.lines[k];
@@ -305,16 +351,349 @@
     });
     return ok.length ? pick(ok) : null;
   }
-  // mid/high suspicion chatter: a matching dig 40% of the time (65% for a rival), else the generic line
+  // mid/high suspicion chatter: a matching dig 40% of the time (65% for a rival); packs may swap in a pvp jab; else the generic line
   function digOrSay(f, tier) {
     const d = digFor(f);
     if (d && Math.random() < (f.rival ? 0.65 : 0.4)) { stats.digs++; return d.text; }
-    return say(f, tier);
+    if (PK.id !== 'classic' && Math.random() < 0.2) { const j = jabLine(); if (j) return j; }
+    return speak(f, tier);
   }
   function kickDig(f) {
     const ds = (f.digs || []).filter((d) => d.when && d.when.afterKick);
     if (ds.length && Math.random() < 0.6) { stats.digs++; return pick(ds).text; }
     return null;
+  }
+
+
+  // ---------- packs: active pack runtime, lazy bulk loading, line pipeline ----------
+  const PACKLIST = Array.isArray(R.packList) && R.packList.length ? R.packList : [{ id: 'classic', name: 'The Boys (classic)', server: { name: 'the boys', icon: 'TB' }, builtin: true }];
+  const metaOf = (id) => PACKLIST.find((p) => p.id === id);
+  const packReady = (id) => !!(R.packs && R.packs[id]);
+  let packId = 'classic';
+  let SERVER = { name: 'the boys', icon: 'TB' };
+  const PK = { id: 'classic', gen: null, pools: null, templates: null, orgs: [], bulk: null, tcache: {} };
+  const BULKS = Object.create(null); // pack id -> { state: 'loading' | 'ready' | 'failed', data, toasted, go }
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const sc = document.createElement('script');
+      sc.src = src;
+      sc.async = true;
+      sc.onload = () => resolve();
+      sc.onerror = () => reject(new Error('could not load ' + src));
+      document.head.appendChild(sc);
+    });
+  }
+  // runs fn once the page has finished loading and the browser is idle, so it never competes with first render
+  function whenIdle(fn) {
+    const run = () => { if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 1500 }); else setTimeout(fn, 150); };
+    if (document.readyState === 'complete') run(); else window.addEventListener('load', run, { once: true });
+  }
+  // lazy (heavy) pack files: queued for idle time after first paint, or loaded right now when `urgent`
+  function ensureBulk(rp, urgent) {
+    let b = BULKS[rp.id];
+    if (!b) {
+      b = BULKS[rp.id] = { state: 'loading', data: null, toasted: false, started: false };
+      b.go = () => {
+        if (b.started) return;
+        b.started = true;
+        Promise.all(rp.lazy.map((f) => loadScript(rp.base + f))).then(() => {
+          const raw = window.AFK_PACKS && window.AFK_PACKS[rp.id] && window.AFK_PACKS[rp.id].bulk;
+          const data = typeof R.cleanBulk === 'function' ? R.cleanBulk(rp.id, raw) : {};
+          b.data = data;
+          b.state = Object.keys(data).length ? 'ready' : 'failed';
+          if (b.state === 'ready' && packId === rp.id) PK.bulk = data;
+          if (b.state === 'ready' && b.toasted && packId === rp.id) toast('dialog loaded', 'the full chatter is online');
+        }).catch((err) => {
+          b.state = 'failed';
+          try { console.warn('[afk-content] [' + rp.id + '] lazy files failed (' + err.message + '); using the hand-written lines only'); } catch (e) { /* no console */ }
+        });
+      };
+      whenIdle(b.go);
+    }
+    if (urgent) b.go();
+    if (b.state === 'ready' && packId === rp.id) PK.bulk = b.data;
+    return b;
+  }
+
+  // a pack whose core files are not in index.html: load them, then validate
+  function loadPackCore(meta) {
+    const m = meta.manifest;
+    if (!m) return Promise.reject(new Error('no manifest'));
+    return Promise.all(m.files.map((f) => loadScript(m.base + f))).then(() => {
+      if (!(typeof R.resolvePack === 'function' && R.resolvePack(meta.id))) throw new Error('pack data invalid');
+    });
+  }
+
+  const PACK_ACH_RULES = {
+    '30k': (r) => r.mins >= 500, // 30,000 seconds of game time = 8h20m
+    insured: (r) => !!(r.cons && r.cons['insurance-claim-form']),
+    'elevator-of-doom': (r) => !!r.elevator,
+    'missed-the-org-fight': (r) => r.fightMissed > 0,
+    'solo-idris': (r) => r.idrisJabs >= 3,
+  };
+  function buildAch(rp) {
+    const out = { ...ACH_BASE };
+    ((rp && rp.achievements) || []).forEach((a) => {
+      if (out[a.id] || !PACK_ACH_RULES[a.id]) return;
+      out[a.id] = { name: a.name, desc: a.desc || a.hint || '', test: PACK_ACH_RULES[a.id] };
+    });
+    return out;
+  }
+
+  function renderServer() {
+    const h = $('#serverName');
+    if (h) h.textContent = `${SERVER.name} ▾`;
+    const i = $('#serverIcon');
+    if (i) { i.textContent = SERVER.icon; i.title = SERVER.name; }
+    document.documentElement.dataset.pack = packId;
+  }
+
+  // switch the whole content set: server name, channels, characters, residents, items, achievements, lines
+  function applyPack(id) {
+    let meta = metaOf(id) || PACKLIST[0];
+    let c = CONTENTS[meta.id];
+    const rp = meta.builtin ? null : (R.packs && R.packs[meta.id]) || null;
+    if (!c && rp) c = CONTENTS[meta.id] = mkContent(rp, CLASSIC, meta.id);
+    if (!c) { meta = PACKLIST[0]; c = CLASSIC; }
+    const pk = meta.builtin ? null : rp;
+    packId = meta.id;
+    useContent(c);
+    SERVER = pk ? { name: pk.server.name, icon: pk.server.icon || firstCh(pk.server.name) } : { name: 'the boys', icon: 'TB' };
+    PK.id = packId;
+    PK.gen = pk && typeof pk.generate === 'function' ? pk.generate : null;
+    PK.pools = pk ? pk.pools : null;
+    PK.templates = pk ? pk.templates : null;
+    PK.orgs = pk ? pk.parodyOrgs : [];
+    PK.bulk = null;
+    PK.tcache = {};
+    recent.length = 0;
+    genVals.clear();
+    ACH = buildAch(pk);
+    inv = loadInv();
+    buildChannels();
+    renderServer();
+    if (pk && pk.lazy.length) ensureBulk(pk, false);
+    return packId;
+  }
+
+  let packToken = 0;
+  let userPack = false; // the player picked a pack by hand: a late stored-pack load must not override it
+  // user-facing switch (settings + start screen). Persists, and starts a fresh run state.
+  function setPack(id, cb) {
+    const meta = metaOf(id);
+    if (!meta) { if (cb) cb(); return; }
+    userPack = true;
+    const token = ++packToken; // only the latest request may apply
+    if (meta.id === packId) { if (cb) cb(); return; }
+    const go = () => {
+      if (token !== packToken) return;
+      applyPack(meta.id);
+      store.set('pack', packId);
+      reset();
+      render();
+      if (cb) cb();
+    };
+    if (meta.builtin || packReady(meta.id)) { go(); return; }
+    toast('Loading pack…', meta.name);
+    loadPackCore(meta).then(go, () => { if (token === packToken) toast('Pack failed to load', meta.name); });
+  }
+
+  // ----- line pipeline -----
+  // For each mood/category a line comes from: hand-written 35%, generated from templates 35%, bulk 30%.
+  // A source that does not exist (no templates for the category, bulk not loaded yet) gives its share to the others.
+  // Character digs sit above this (see digOrSay). The last 60 lines are remembered so nothing repeats in a short window.
+  const recent = [];
+  const genVals = new Set();
+  const wOf = (e) => (e && typeof e.w === 'number' && e.w > 0 ? e.w : 1);
+  const pickW = (arr) => {
+    let tot = 0;
+    arr.forEach((e) => { tot += wOf(e); });
+    let r = Math.random() * tot;
+    for (const e of arr) { r -= wOf(e); if (r < 0) return e; }
+    return arr[arr.length - 1];
+  };
+  const GEN_MAP = {
+    orgFight: ['orgFight'],
+    pvpJab: ['pvpJab'],
+    missedFight: ['returnFight', 'leftOnRead'],
+    welcomeBack: ['welcomeBack'],
+    trade: ['cargoRun', 'claimTimer'],
+    serverlore: ['misc', 'wen', 'crash30k', 'elevatorDoom'],
+  };
+  function tmplPool(cat) {
+    const T = PK.templates;
+    if (!T || typeof PK.gen !== 'function') return null;
+    if (cat in PK.tcache) return PK.tcache[cat];
+    const out = [];
+    (GEN_MAP[cat] || []).forEach((k) => { if (Array.isArray(T[k])) out.push(...T[k]); });
+    if (T.mood && Array.isArray(T.mood[cat])) out.push(...T.mood[cat]);
+    PK.tcache[cat] = out.length ? out : null;
+    return PK.tcache[cat];
+  }
+  const bulkPool = (cat) => (PK.bulk && Array.isArray(PK.bulk[cat]) && PK.bulk[cat].length ? PK.bulk[cat] : null);
+  // fill {place} {ship} ... slots with the pack generator (leaves {me} {p} {t} for meTok)
+  function genFill(tp) {
+    const raw = typeof tp === 'string' ? tp : (tp && (tp.t || tp.text)) || '';
+    if (typeof PK.gen !== 'function') return raw;
+    if (genVals.size > 48) genVals.clear();
+    try { return PK.gen(tp, PK.pools, Math.random, genVals); } catch (e) { return raw; }
+  }
+  // handFn: () => hand-written line, or null when this category has none. opts.peek = do not remember the result
+  function mixLine(cat, handFn, opts) {
+    const classic = PK.id === 'classic';
+    const tp = classic ? null : tmplPool(cat);
+    const bp = classic ? null : bulkPool(cat);
+    const wH = handFn ? 35 : 0;
+    const wG = tp ? 35 : 0;
+    const wB = bp ? 30 : 0;
+    if (wH + wG + wB === 0) return null;
+    let text = '';
+    let src = 'hand';
+    for (let i = 0; i < 12; i++) {
+      // late attempts skip the (small) hand-written pool when other sources exist, so a repeat is only ever a last resort
+      const h = i >= 5 && wG + wB ? 0 : wH;
+      const r = Math.random() * (h + wG + wB);
+      if (r < h) { src = 'hand'; text = handFn() || ''; }
+      else if (r < h + wG) { src = 'gen'; text = genFill(pickW(tp)); }
+      else { src = 'bulk'; text = pick(bp); }
+      if (i === 0 && !(opts && opts.peek)) stats.first[src]++;
+      if (text && !recent.includes(text)) break;
+    }
+    if (!text) return null;
+    if (!(opts && opts.peek)) {
+      stats.src[src]++;
+      recent.push(text);
+      while (recent.length > 60) recent.shift();
+    }
+    return text;
+  }
+  const handCat = (cat) => (Array.isArray(LINES[cat]) && LINES[cat].length ? () => pick(LINES[cat]) : null);
+  const speak = (f, cat) => mixLine(cat, () => say(f, cat)) || lineOr(cat, '...');
+  const speakCat = (cat, opts) => mixLine(cat, handCat(cat), opts);
+
+  // ----- brb / excuse derivation for bulk strings (plain text) -----
+  const BRB_WORDS = [
+    [/\bhalf (an )?hour\b/, 30], [/\b(hours?|hrs?)\b/, 60], [/\bdinner\b/, 30], [/\blunch\b/, 25], [/\bbreakfast\b/, 20],
+    [/\bshower\b/, 15], [/\b(nap|sleep)\b/, 30], [/\b(food|eat|eating|snack|pizza|sandwich|ramen)\b/, 10],
+    [/\b(bathroom|toilet|restroom)\b/, 5], [/\b(coffee|drink|water|kettle)\b/, 4], [/\b(dog|trash|laundry|door)\b/, 6],
+    [/\b(secs?|seconds?|moment|quick|minute)\b/, 1],
+  ];
+  const stripMe = (t) => t.replace(/@?\{me\}[,:]?[ \t]*/g, '');
+  function deriveP(text) {
+    let m;
+    if ((m = /(\d{1,3})\s*(?:hours?|hrs?|h)\b/i.exec(text))) return clamp(+m[1] * 60, 1, 240);
+    if ((m = /(\d{1,3})\s*(?:minutes?|mins?|m)\b/i.exec(text))) return clamp(+m[1], 1, 240);
+    if ((m = /(\d{1,3})\s*(?:seconds?|secs?|s)\b/i.exec(text))) return clamp(Math.round(+m[1] / 60), 1, 240);
+    if ((m = /(?:^|\s)(\d{1,3})(?![\w.%:/])/.exec(text)) && +m[1] >= 1) return clamp(+m[1], 1, 240);
+    const low = text.toLowerCase();
+    for (const [re, v] of BRB_WORDS) if (re.test(low)) return v;
+    return Math.round(rand(2, 20));
+  }
+  // shorter promise = higher multiplier, 0.9 (an hour or more) .. 1.6 (a minute)
+  const multFor = (p) => Math.round(clamp(1.6 - 0.7 * Math.log(Math.max(1, p)) / Math.log(60), 0.9, 1.6) * 100) / 100;
+  function deriveBrb(raw) {
+    const text0 = stripMe(String(raw));
+    const p = Math.round(deriveP(text0));
+    const t = tidy(text0.replace(/\{p\}|\{t\}/g, fmtMins(p)).replace(TOKEN_RE, ''), true) || 'brb';
+    return { t, p, m: multFor(p) };
+  }
+  function deriveExcuse(raw) {
+    const text0 = stripMe(String(raw));
+    const t = tidy(text0.replace(/\{p\}/g, fmtMins(S.promise)).replace(/\{t\}/g, fmtMins(S.mins)).replace(TOKEN_RE, ''), true) || 'it was not my fault';
+    const lo = Math.round(rand(-10, 22));
+    const hi = Math.round(Math.min(45, lo + rand(12, 32)));
+    return { t, r: [lo, hi], k: String(raw) };
+  }
+  // n distinct options: hand-written 35 : bulk 30 (all hand-written until bulk has loaded)
+  function pickOptions(hand, bulkCat, derive, n) {
+    const out = [];
+    const seen = new Set();
+    const hp = shuffle(hand);
+    let hi = 0;
+    for (let g = 0; out.length < n && g < 60; g++) {
+      const bp = PK.id !== 'classic' ? bulkPool(bulkCat) : null;
+      let o;
+      if (bp && (hi >= hp.length || Math.random() < 30 / 65)) o = derive(pick(bp));
+      else if (hi < hp.length) o = hp[hi++];
+      else break;
+      if (seen.has(o.t)) continue;
+      seen.add(o.t);
+      out.push(o);
+    }
+    return out;
+  }
+
+  // ----- pack events while AFK: org-fight pings, rival orgs, jabs, ambient chatter -----
+  const IDRIS = /idris/i;
+  const ORG_EVENTS = ['{org} is camping {place}', 'heads up, {org} is rolling through {place}', '{org} just interdicted someone near {place}', '{org} was spotted at {place}, they brought a blob'];
+  const rivalOf = (org) => ({ name: org.name.slice(0, 24), color: '#c0392b' });
+  function orgText(org) {
+    const t = org.lines.length && Math.random() < 0.5 ? pick(org.lines) : pick(ORG_EVENTS).replace('{org}', org.name);
+    return genFill(t);
+  }
+  function orgFightPing() {
+    if (S.phase !== 'afk' || S.kicked) return;
+    const org = PK.orgs.length && Math.random() < 0.5 ? pick(PK.orgs) : null;
+    let t = org ? orgText(org) : speakCat('orgFight');
+    if (!t) return;
+    if (!/@\{me\}/.test(t)) t = /\{me\}/.test(t) ? t.replace('{me}', '@{me}') : '@{me} ' + t;
+    S.fightPings++;
+    S.lastFight = S.mins;
+    const cid = routeCh('pvp-ops');
+    const n0 = S.pings.length;
+    post(friendIn(cid), t, { ch: cid, weight: 0.8 });
+    S.pings.slice(n0).forEach((p) => { p.fight = true; });
+    if (org && org.taunts.length && Math.random() < 0.35) {
+      const rd = S.round;
+      later(1100, () => { if (S.phase === 'afk' && S.round === rd) post(rivalOf(org), pick(org.taunts), { ch: cid }); });
+    }
+  }
+  // a pvp jab aimed at the player; leans toward the Idris ones. 4th arg forces Idris (tests).
+  function jabLine(forceIdris) {
+    if (PK.orgs.length && !forceIdris && Math.random() < 0.2) {
+      const o = pick(PK.orgs);
+      if (o.lines.length) return orgText(o);
+    }
+    let t = null;
+    for (let i = 0; i < (forceIdris ? 40 : 4); i++) {
+      t = speakCat('pvpJab', { peek: true });
+      if (!t) break;
+      if (IDRIS.test(t) && /\{me\}/.test(t)) break;
+      if (!forceIdris && Math.random() < 0.5) break;
+    }
+    if (!t) return null;
+    recent.push(t);
+    while (recent.length > 60) recent.shift();
+    if (IDRIS.test(t) && /\{me\}/.test(t)) {
+      S.idrisJabs++;
+      if (S.idrisJabs >= 3) unlockAch('solo-idris');
+    }
+    return t;
+  }
+  function packChatter(dm) {
+    if (PK.id === 'classic') return;
+    if (S.mins - S.lastFight > 6 && Math.random() < Math.min(1, 0.06 * dm)) orgFightPing();
+    if (Math.random() < Math.min(1, 0.05 * dm)) {
+      const trade = Math.random() < 0.5;
+      const t = speakCat(trade ? 'trade' : 'serverlore');
+      if (t) { const cid = routeCh(trade ? 'trade-routes' : null); post(friendIn(cid), t, { ch: cid }); }
+    }
+  }
+  // on return (manual or dragged): left-on-read lines for unanswered org-fight pings, else sometimes a welcome back
+  function returnChatter() {
+    if (PK.id === 'classic') return;
+    // only fight pings still unanswered and unforgiven count as missed (triage answers clear the rest)
+    const n = S.pings.filter((p) => p.fight && !p.answered && !p.forgiven).length;
+    S.fightPings = 0;
+    if (n > 0) {
+      S.fightMissed++;
+      unlockAch('missed-the-org-fight');
+      later(600, () => { const t = speakCat('missedFight'); if (t) post(friend(), t); });
+      if (Math.random() < 0.5) later(1300, () => { const t = speakCat('welcomeBack'); if (t) post(friend(), t); });
+    } else if (Math.random() < 0.4) {
+      later(600, () => { const t = speakCat('welcomeBack'); if (t) post(friend(), t); });
+    }
   }
 
   // ---------- AFK-channel resident ----------
@@ -338,6 +717,11 @@
     const r = S.resident;
     if (!r || !S.inAfkCh || S.kicked) return;
     const own = r.lines && r.lines.idle;
+    if (PK.id !== 'classic') {
+      const pool = [].concat(Array.isArray(r.status) ? r.status : [], Array.isArray(own) ? own : []);
+      sys(`💤 ${r.name}: ${mixLine('resident', pool.length ? () => pick(pool) : null) || '…'}`, 'resident');
+      return;
+    }
     sys(`💤 ${r.name}: ${own && own.length && Math.random() < 0.6 ? pick(own) : '…'}`, 'resident');
   }
   // called whenever the player is moved/dragged into the afk channel
@@ -391,8 +775,24 @@
       tokAwarded: 0,
       resident: pickResident(),
       resT: 0,
+      idrisJabs: 0,
+      fightMissed: 0,
+      fightPings: 0,
+      lastFight: -99,
+      elevator: false,
+      ch: Object.fromEntries(TEXT.map((c) => [c.id, { msgs: [], unread: 0, mentions: 0, muted: !!c.muted, lastReplyAt: -1e9 }])),
+      active: TEXT[0].id,
+      brbCh: null,
+      pings: [],
+      pingSeq: 0,
+      tri: null,
+      lor: null,
+      follows: 0,
+      brbN: Object.create(null),
+      actBuild: null,
+      slowTok: 0,
     });
-    $('#messages').textContent = '';
+    repaint();
     clearActions();
     document.body.classList.remove('afk');
     $('#afkPanel').hidden = true;
@@ -401,6 +801,7 @@
     renderChip();
     renderMembers();
     renderInv();
+    renderChannelList();
   }
 
   // ---------- sound ----------
@@ -441,95 +842,401 @@
     return a;
   }
 
+  // ---------- text channels: per-channel history, unread/mention state, pings ----------
+  // tuning for the channel game (docs: CONTENT.md "Channels")
+  const CT = { base: 1.6, cap: 14, seenMult: 1.25, follows: 3, hist: 200, muteMax: 3, brbW: 2, visMid: 0.85 };
+  const DEFAULT_REPLIES = [{ t: 'here', r: [1, 5] }, { t: 'sorry, on it', r: [2, 7] }, { t: 'mb just saw this', r: [0, 6] }, { t: 'yes?', r: [1, 4] }];
+  const FOLLOWUPS = ['@{me} did you see my message in {ch}??', 'yo @{me} check {ch}', '@{me} i pinged you in {ch} bro', '@{me} {ch}. now.'];
+  const textById = (id) => TEXT.find((c) => c.id === id);
+  function activeCh() { return (S.active && textById(S.active)) || TEXT[0]; }
+  const defCh = () => ((S.phase === 'chat' || S.phase === 'intro' || S.phase === 'over') ? S.active : (S.brbCh && S.ch[S.brbCh] ? S.brbCh : S.active));
+  const brbVis = () => { const c = S.brbCh && textById(S.brbCh); return c ? c.visibility : CT.visMid; };
+  let chanDirty = true;
+  let swallow = false; // the click that finishes the tap/key that woke you must not also switch channel
+  let lastNote = -1e9;
+
+  function announce(text) { const n = $('#srStatus'); if (n) n.textContent = text; }
+
+  function msgNode(m) {
+    const box = document.createElement('div');
+    if (m.sys) {
+      box.className = 'msg system ' + m.tone;
+      box.textContent = m.text;
+      return box;
+    }
+    box.className = 'msg' + (m.mention ? ' mention' : '');
+    const who = m.who;
+    const mRe = mentionRe();
+    box.appendChild(avatar(who));
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    const head = document.createElement('div');
+    head.className = 'msg-head';
+    const name = document.createElement('span');
+    name.className = 'msg-name';
+    name.style.color = who.color;
+    name.textContent = who.name;
+    const time = document.createElement('span');
+    time.className = 'msg-time';
+    time.textContent = fmtClock(m.clock);
+    head.append(name, time);
+    const t = document.createElement('div');
+    t.className = 'msg-text';
+    // highlight @mentions safely
+    m.text.split(mRe).forEach((part) => {
+      if (part && part.toLowerCase() === '@' + ME.name.toLowerCase()) {
+        const s = document.createElement('span');
+        s.className = 'at';
+        s.textContent = part;
+        t.appendChild(s);
+      } else if (part) {
+        t.appendChild(document.createTextNode(part));
+      }
+    });
+    body.append(head, t);
+    box.appendChild(body);
+    return box;
+  }
+  function paint(m) {
+    const box = $('#messages');
+    box.appendChild(msgNode(m));
+    while (box.children.length > CT.hist) box.firstChild.remove();
+    box.scrollTop = box.scrollHeight;
+  }
+  // rebuild the message view from the active channel's history. Live region is muted during the replay so a
+  // screen reader does not read the whole channel back.
+  function repaint() {
+    const box = $('#messages');
+    const st = S.ch && S.ch[S.active];
+    box.setAttribute('aria-busy', 'true');
+    box.setAttribute('aria-live', 'off');
+    box.textContent = '';
+    const frag = document.createDocumentFragment();
+    if (st) st.msgs.forEach((m) => frag.appendChild(msgNode(m)));
+    box.appendChild(frag);
+    box.scrollTop = box.scrollHeight;
+    const c = activeCh();
+    box.setAttribute('aria-label', `Messages in ${labelOf(c)}`);
+    $('#chatName').textContent = chanLabel(c);
+    setTimeout(() => { box.setAttribute('aria-busy', 'false'); box.setAttribute('aria-live', 'polite'); }, 60);
+  }
+  const composerNow = () => (S.kicked ? 'You do not have permission to send messages in this channel.' : S.phase === 'afk' ? `${ME.name} is typing... (he is not)` : composerIdle());
+
+  function addPing(id, who, weight, follow) {
+    const c = textById(id);
+    const p = { id: ++S.pingSeq, ch: id, from: who && who.name ? who.name : '?', minsAtSend: S.mins, weight: weight || 1, answered: false, seen: false, forgiven: false, delivered: true, deliverAt: 0, isFollow: !!follow, followed: false, late: 0 };
+    if (S.ch[id].muted) { p.delivered = false; p.deliverAt = S.mins + rand(c.muteDelay[0], c.muteDelay[1]); }
+    S.pings.push(p);
+    return p;
+  }
+
   function post(who, text, opts = {}) {
     text = meTok(text);
-    const box = $('#messages');
-    const el = document.createElement('div');
-    if (opts.system) {
-      el.className = 'msg system ' + (opts.tone || '');
-      el.textContent = text;
-    } else {
-      el.className = 'msg';
-      const mRe = mentionRe();
-      if (who !== ME && mRe.test(text)) el.classList.add('mention');
-      el.appendChild(avatar(who));
-      const body = document.createElement('div');
-      body.className = 'msg-body';
-      const head = document.createElement('div');
-      head.className = 'msg-head';
-      const name = document.createElement('span');
-      name.className = 'msg-name';
-      name.style.color = who.color;
-      name.textContent = who.name;
-      const time = document.createElement('span');
-      time.className = 'msg-time';
-      time.textContent = fmtClock(S.clock);
-      head.append(name, time);
-      const t = document.createElement('div');
-      t.className = 'msg-text';
-      // highlight @mentions safely
-      text.split(mRe).forEach((part) => {
-        if (part && part.toLowerCase() === '@' + ME.name.toLowerCase()) {
-          const s = document.createElement('span');
-          s.className = 'at';
-          s.textContent = part;
-          t.appendChild(s);
-        } else if (part) {
-          t.appendChild(document.createTextNode(part));
-        }
-      });
-      body.append(head, t);
-      el.appendChild(body);
+    const id = opts.ch && S.ch[opts.ch] ? opts.ch : defCh();
+    const st = S.ch[id];
+    const other = who !== ME && !opts.system;
+    const m = { who, text, sys: !!opts.system, tone: opts.tone || '', clock: S.clock, mention: other && mentionRe().test(text) };
+    st.msgs.push(m);
+    if (st.msgs.length > CT.hist) st.msgs.shift();
+    const shown = id === S.active;
+    if (shown) paint(m);
+    if (!other) return;
+    const afk = S.phase === 'afk';
+    chanDirty = true;
+    if (m.mention && afk) {
+      const p = addPing(id, who, opts.weight, opts.follow);
+      if (!p.delivered) return; // muted channel: nobody tells you yet (see deliverMuted)
     }
-    box.appendChild(el);
-    while (box.children.length > 200) box.firstChild.remove();
-    box.scrollTop = box.scrollHeight;
-
-    if (who !== ME && !opts.system) {
-      if (mentionRe().test(text)) {
-        sfx.ping();
-        if (S.phase === 'afk') S.unread++;
-      } else {
-        sfx.msg();
-      }
+    if (m.mention) {
+      if (!shown || afk) st.mentions++;
+      if (afk) S.unread++;
+      if (!st.muted) sfx.ping();
+      if (!shown && !afk && !st.muted) notifyInactive(id, who);
+    } else {
+      if (!shown || afk) st.unread++;
+      if (shown) sfx.msg();
     }
   }
 
-  function sys(text, tone) { post(null, text, { system: true, tone }); }
+  // one rate-limited heads-up for a mention in a channel you are not looking at (toast + screen-reader status)
+  function notifyInactive(id, who) {
+    const now = performance.now();
+    if (catchingUp || now - lastNote < 8000) return;
+    lastNote = now;
+    const c = textById(id);
+    announce(`${who.name} mentioned you in ${c.name}`);
+    toast(`@${who.name} in ${labelOf(c)}`, 'new mention');
+  }
 
-  function clearActions() { $('#actions').textContent = ''; }
+  function sys(text, tone, ch) { post(null, text, { system: true, tone, ch }); }
 
-  function setActions(title, options, extra) {
+  // pings that arrived in a muted channel reach you after muteDelay game minutes
+  function deliverMuted() {
+    S.pings.forEach((p) => {
+      if (p.delivered || S.mins < p.deliverAt) return;
+      p.delivered = true;
+      S.ch[p.ch].mentions++;
+      S.unread++;
+      chanDirty = true;
+    });
+  }
+  // on return: muted pings that arrived within the last muteDelay[1] minutes are forgiven (fair); older ones count
+  function settleMuted() {
+    S.pings.forEach((p) => {
+      if (p.delivered) return;
+      p.delivered = true;
+      S.ch[p.ch].mentions++;
+      const c = textById(p.ch);
+      if (S.mins - p.minsAtSend < (c ? c.muteDelay[1] : 12)) p.forgiven = true;
+    });
+  }
+  const owedPings = () => S.pings.filter((p) => !p.answered && !p.forgiven);
+
+  // where a friend posts: weighted by busyness, brb channel x2; pref = a channel id the line belongs in (70%)
+  function weightedCh(skip) {
+    const pool = TEXT.filter((c) => c.id !== skip);
+    const list = pool.length ? pool : TEXT;
+    const w = list.map((c) => (0.4 + c.busyness) * (c.id === S.brbCh ? CT.brbW : 1));
+    let r = Math.random() * w.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < list.length; i++) { r -= w[i]; if (r < 0) return list[i].id; }
+    return list[list.length - 1].id;
+  }
+  function routeCh(pref) {
+    if (pref && textById(pref) && Math.random() < 0.7) return pref;
+    return weightedCh();
+  }
+  function friendIn(cid, not) {
+    const c = textById(cid);
+    const ok = (f) => !f.away && f.name !== not;
+    const here = c ? S.friends.filter((f) => ok(f) && c.members.includes(f.id)) : [];
+    if (here.length) return pick(here);
+    const any = S.friends.filter(ok);
+    return any.length ? pick(any) : friend();
+  }
+
+  function pingRaw(p) {
+    const c = textById(p.ch);
+    const age = Math.max(0, S.mins - p.minsAtSend);
+    const ageF = Math.min(2, 0.5 + age / Math.max(S.promise, 5));
+    const ghost = p.ch !== S.brbCh && brbVis() < 0.5 ? 1.3 : 1; // you told almost nobody, so the others had no idea
+    return CT.base * p.weight * ageF * (0.6 + (c ? c.visibility : 0.5)) * (p.seen ? CT.seenMult : 1) * ghost;
+  }
+  // list = every counted ping. Unanswered ones pay in full, answered ones pay a sliver that grows with how long
+  // you took (late = fraction of the triage timer used). Biggest first, each next one x0.85, capped, softer early on.
+  function lorPenalty(list, scale) {
+    const vals = [];
+    const byCh = {};
+    let un = 0;
+    list.forEach((p) => {
+      let v = pingRaw(p);
+      if (p.answered) v *= 0.3 * (p.late || 0);
+      else { un++; byCh[p.ch] = (byCh[p.ch] || 0) + 1; }
+      vals.push(v);
+    });
+    vals.sort((a, b) => b - a);
+    let pen = 0;
+    vals.forEach((v, i) => { pen += v * Math.pow(0.85, i); });
+    pen = Math.min(CT.cap, pen) * clamp(0.5 + 0.25 * S.round, 0.75, 1) * scale;
+    return { pen, un, byCh };
+  }
+  // suspicion can rise by the penalty, but the penalty alone never takes you past 90% (kicks come from the usual paths)
+  function applyLor(res, refund, ch) {
+    const before = S.sus;
+    const ns = clamp(Math.min(before + res.pen - refund, Math.max(before, 90)), 0, 100);
+    S.sus = ns;
+    const d = Math.round(ns - before);
+    S.lor = { count: res.un, d };
+    const where = Object.keys(res.byCh).map((id) => `${labelOf(textById(id) || { icon: '#', name: id })}${res.byCh[id] > 1 ? ' x' + res.byCh[id] : ''}`).join(', ');
+    const sg = d >= 0 ? '+' : '-';
+    const txt = res.un
+      ? `📨 left on read x${res.un} (${where}) · ${sg}${Math.abs(d)}% suspicion`
+      : `📨 every ping answered · ${sg}${Math.abs(d)}% suspicion`;
+    sys(txt, res.un ? 'bad' : 'good', ch);
+    if (res.un) sfx.bad();
+  }
+
+  // ---------- channel switching, mute, list ----------
+  const canSwitch = () => S.phase !== 'afk' && S.phase !== 'leaving' && S.phase !== 'judging' && $('#modal').hidden;
+  function switchChannel(id, o = {}) {
+    const forced = !!o.force && !o.user;
+    if (!S.ch || !S.ch[id] || !textById(id)) return false;
+    if (S.phase === 'afk' || (!o.force && !canSwitch())) return false;
+    const changed = id !== S.active;
+    S.active = id;
+    const st = S.ch[id];
+    st.unread = 0;
+    st.mentions = 0;
+    if (!forced) S.pings.forEach((p) => { if (p.ch === id && !p.answered) p.seen = true; }); // seen but unanswered = left on read; forced switches (return to brb channel) do not count
+    if (changed) repaint();
+    if (S.tri) S.tri.list = false;
+    if (!S.kicked && S.phase !== 'afk') $('#composerText').textContent = composerNow();
+    chanDirty = true;
+    renderChannelList();
+    if (S.phase === 'triage' && S.tri) setCtx(buildTriage, !o.focus);
+    else if (S.actBuild && (S.phase === 'chat' || S.phase === 'excuse')) S.actBuild(true);
+    // keep the active chip visible in the mobile strip
+    const bar = $('#chanBar');
+    const row = chanRows.find((r) => r.c.id === id);
+    if (bar && row) {
+      const b = row.btns[1];
+      if (b.offsetLeft < bar.scrollLeft) bar.scrollLeft = b.offsetLeft - 12;
+      else if (b.offsetLeft + b.offsetWidth > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = b.offsetLeft + b.offsetWidth - bar.clientWidth + 12;
+    }
+    return true;
+  }
+  function stepChannel(dir, unreadOnly) {
+    const n = TEXT.length;
+    let i = TEXT.findIndex((c) => c.id === S.active);
+    for (let k = 0; k < n; k++) {
+      i = (i + dir + n) % n;
+      const st = S.ch[TEXT[i].id];
+      if (!unreadOnly || st.mentions > 0 || (st.unread > 0 && !st.muted)) return switchChannel(TEXT[i].id);
+    }
+    return false;
+  }
+  function toggleMute(id) {
+    if (!S.ch || !S.ch[id] || S.phase === 'afk' || S.kicked) return;
+    const st = S.ch[id];
+    if (!st.muted && TEXT.filter((c) => S.ch[c.id].muted).length >= CT.muteMax) { toast('Too many muted', `max ${CT.muteMax} muted channels`); return; }
+    st.muted = !st.muted;
+    chanDirty = true;
+    renderChannelList();
+    announce(`${labelOf(textById(id))} ${st.muted ? 'muted: pings there reach you late' : 'unmuted'}`);
+  }
+
+  const chanRows = [];
+  function mkChanBtn(c, bar) {
+    const b = el('button', 'ch');
+    b.type = 'button';
+    b.dataset.ch = c.id;
+    if (c.desc) b.title = c.desc;
+    b.setAttribute('aria-keyshortcuts', 'Alt+ArrowUp Alt+ArrowDown');
+    const ic = el('span', 'ch-ic', c.icon);
+    ic.setAttribute('aria-hidden', 'true');
+    const nm = el('span', 'ch-name', c.name);
+    const bd = el('span', 'ch-badge');
+    bd.setAttribute('aria-hidden', 'true');
+    b.append(ic, nm, bd);
+    b.addEventListener('click', () => {
+      if (swallow) { swallow = false; return; }
+      if (S.phase === 'afk') return;
+      initAudio();
+      switchChannel(c.id);
+    });
+    return b;
+  }
+  function chanNavKey(e) {
+    const t = e.target && e.target.closest ? e.target.closest('button.ch') : null;
+    if (!t || e.ctrlKey || e.metaKey) return;
+    const btns = Array.from(e.currentTarget.querySelectorAll('button.ch'));
+    let i = btns.indexOf(t);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') i = (i + 1) % btns.length;
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') i = (i - 1 + btns.length) % btns.length;
+    else if (e.key === 'Home') i = 0;
+    else if (e.key === 'End') i = btns.length - 1;
+    else if ((e.key === 'm' || e.key === 'M') && !e.altKey) { e.preventDefault(); toggleMute(t.dataset.ch); return; }
+    else return;
+    e.preventDefault();
+    btns.forEach((b) => { b.tabIndex = b === btns[i] ? 0 : -1; });
+    btns[i].focus();
+  }
+  function renderChannelList() {
+    chanDirty = false;
+    if (!S.ch) return;
+    const afk = S.phase === 'afk';
+    const fa = document.activeElement;
+    const conts = [$('#textChans'), $('#chanBar')];
+    chanRows.forEach(({ c, btns, mutes }) => {
+      const st = S.ch[c.id];
+      if (!st) return;
+      const active = c.id === S.active;
+      const m = st.mentions;
+      const dot = st.unread > 0 && !st.muted;
+      btns.forEach((b, k) => {
+        b.classList.toggle('active', active);
+        b.classList.toggle('unread', m > 0 || dot);
+        b.classList.toggle('muted', st.muted);
+        if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+        b.setAttribute('aria-disabled', afk ? 'true' : 'false');
+        const bd = b.querySelector('.ch-badge');
+        bd.className = 'ch-badge' + (m > 0 ? ' mention' : dot ? ' dot' : '');
+        bd.textContent = m > 0 ? (m > 9 ? '9+' : String(m)) : '';
+        b.setAttribute('aria-label', labelOf(c) + (m > 0 ? `, ${m} mention${m > 1 ? 's' : ''}` : dot ? ', unread messages' : '') + (st.muted ? ', muted' : '') + (active ? ', current channel' : ''));
+        const focusIn = fa && fa.classList && fa.classList.contains('ch') && conts[k].contains(fa);
+        b.tabIndex = focusIn ? (b === fa ? 0 : -1) : active ? 0 : -1;
+      });
+      mutes.forEach((mute) => {
+        mute.textContent = st.muted ? '🔕' : '🔔';
+        mute.setAttribute('aria-pressed', String(st.muted));
+        mute.setAttribute('aria-label', `Mute ${c.name}`);
+        mute.title = st.muted ? 'Muted: pings here reach you late (M)' : 'Mute (M): pings here reach you late';
+        mute.disabled = afk;
+      });
+    });
+  }
+
+  // ---------- actions panel ----------
+  function clearActions() { S.actBuild = null; $('#actions').textContent = ''; }
+  // build(noFocus) draws the panel; it is kept so switching channel can redraw it (reply set, slowmode, hints)
+  function setCtx(build, noFocus) { S.actBuild = build; build(!!noFocus); }
+
+  function setActions(title, options, extra, o = {}) {
     const box = $('#actions');
     box.textContent = '';
     const h = document.createElement('div');
     h.className = 'actions-title';
     h.textContent = title;
+    if (o.timer) {
+      const tt = document.createElement('span');
+      tt.className = 'tri-time';
+      tt.id = 'triTime';
+      tt.setAttribute('aria-hidden', 'true');
+      tt.textContent = Math.ceil(o.timer.left / 1000) + 's';
+      h.appendChild(tt);
+    }
     const grid = document.createElement('div');
     grid.className = 'choices';
-    options.forEach((o, i) => {
+    options.forEach((opt, i) => {
       const b = document.createElement('button');
       b.className = 'choice';
       b.dataset.key = String(i + 1);
       const k = document.createElement('span');
       k.className = 'k';
       k.textContent = `[${i + 1}]`;
-      b.append(k, document.createTextNode(o.label));
-      if (o.sub) {
+      b.append(k, document.createTextNode(opt.label));
+      if (opt.sub) {
         const sub = document.createElement('span');
         sub.className = 'sub';
-        sub.textContent = o.sub;
+        sub.textContent = opt.sub;
         b.appendChild(sub);
       }
+      if (opt.disabled) b.setAttribute('aria-disabled', 'true');
       b.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (opt.disabled) return;
         initAudio();
         clearActions();
-        o.fn();
+        opt.fn();
       });
       grid.appendChild(b);
     });
-    box.append(h, grid);
+    box.appendChild(h);
+    if (o.timer) {
+      const bar = document.createElement('div');
+      bar.className = 'tri-bar';
+      const f = document.createElement('div');
+      f.className = 'tri-fill';
+      f.style.width = (100 * o.timer.left / o.timer.total) + '%';
+      bar.appendChild(f);
+      box.appendChild(bar);
+    }
+    if (o.hint) {
+      const hint = document.createElement('div');
+      hint.className = 'actions-hint';
+      hint.textContent = o.hint;
+      box.appendChild(hint);
+    }
+    box.appendChild(grid);
     if (extra) {
       const x = document.createElement('button');
       x.className = 'shop-link';
@@ -538,21 +1245,160 @@
       box.appendChild(x);
     }
     $('#messages').scrollTop = $('#messages').scrollHeight;
-    if (S.phase !== 'afk' && grid.firstChild) grid.firstChild.focus({ preventScroll: true });
+    if (S.phase !== 'afk' && !o.noFocus && grid.firstChild) grid.firstChild.focus({ preventScroll: true });
+  }
+
+  // ---------- slowmode (real seconds, per channel, only for quick replies and excuses) ----------
+  function slowLeft(id) {
+    const c = textById(id);
+    if (!c || !(c.slowmodeSec > 0)) return 0;
+    return Math.ceil(Math.max(0, c.slowmodeSec * 1000 - (performance.now() - S.ch[id].lastReplyAt)) / 1000);
+  }
+  const stampSlow = (id) => { S.ch[id].lastReplyAt = performance.now(); };
+  function slowTick() {
+    const tok = ++S.slowTok;
+    later(1000, () => { if (tok === S.slowTok && S.actBuild) S.actBuild(true); });
+  }
+
+  // ---------- return: answer your pings (timed triage), then explain yourself ----------
+  function startTriage() {
+    const owed = owedPings();
+    const chs = Array.from(new Set(owed.map((p) => p.ch)));
+    const total = clamp(7000 + 3500 * chs.length, 9000, 22000);
+    S.phase = 'triage';
+    const tri = { t0: performance.now(), total, list: true, order: shuffle(chs), refund: 0, reps: {} };
+    S.tri = tri;
+    sys(`📨 ${owed.length} unanswered ping${owed.length > 1 ? 's' : ''} in ${chs.length} channel${chs.length > 1 ? 's' : ''}. answer before it gets worse`, 'bad');
+    setCtx(buildTriage);
+    triTick(tri);
+  }
+  function triTick(tri) {
+    later(200, () => {
+      if (S.tri !== tri) return;
+      const left = tri.total - (performance.now() - tri.t0);
+      if (left <= 0) { finishTriage(); return; }
+      const t = $('#triTime');
+      if (t) t.textContent = Math.ceil(left / 1000) + 's';
+      const f = $('.tri-fill');
+      if (f) f.style.width = (100 * left / tri.total) + '%';
+      triTick(tri);
+    });
+  }
+  function repliesFor(c, tri) {
+    if (!tri.reps[c.id]) {
+      const pool = Array.isArray(c.replies) && c.replies.length ? c.replies : DEFAULT_REPLIES;
+      tri.reps[c.id] = shuffle(pool).slice(0, 3);
+    }
+    return tri.reps[c.id];
+  }
+  function buildTriage(noFocus) {
+    const tri = S.tri;
+    if (!tri) return;
+    const owed = owedPings();
+    const c = activeCh();
+    const mine = owed.filter((p) => p.ch === c.id);
+    const timer = { left: Math.max(0, tri.total - (performance.now() - tri.t0)), total: tri.total };
+    const s = (n) => (n === 1 ? '' : 's');
+    if (mine.length && !tri.list) {
+      const left = slowLeft(c.id);
+      const opts = repliesFor(c, tri).map((r) => ({
+        label: r.t,
+        sub: left ? `slowmode ${left}s` : 'quick reply: answers every ping here',
+        disabled: left > 0,
+        fn: () => answerCh(c, r),
+      }));
+      opts.push({ label: '◂ other channels', sub: 'back to the list', fn: () => { tri.list = true; setCtx(buildTriage); } });
+      setActions(`ANSWER ${labelOf(c)} · ${mine.length} ping${s(mine.length)}`, opts, null, { noFocus, timer, hint: 'A reply only clears pings in the channel you post it in.' });
+      if (left) slowTick();
+      return;
+    }
+    const opts = tri.order.filter((id) => owed.some((p) => p.ch === id)).map((id) => {
+      const cc = textById(id);
+      const ps = owed.filter((p) => p.ch === id);
+      const oldest = Math.max.apply(null, ps.map((p) => S.mins - p.minsAtSend));
+      const heat = ps.reduce((a, p) => a + pingRaw(p), 0);
+      return {
+        label: `${labelOf(cc)} · ${ps.length} ping${s(ps.length)}`,
+        sub: `oldest ${fmtMins(oldest)} · ${heat >= 8 ? 'they are mad' : heat >= 4 ? 'getting heated' : 'mild'}`,
+        fn: () => switchChannel(id, { force: true, user: true, focus: true }),
+      };
+    });
+    opts.push({ label: 'skip: just explain myself', sub: 'unanswered pings count as left on read', fn: () => finishTriage() });
+    setActions('PING TRIAGE: who do you answer first?', opts, null, { noFocus, timer, hint: 'Hotter, older pings cost more the longer they wait. You can also click a channel in the sidebar.' });
+  }
+  function answerCh(c, rep) {
+    const tri = S.tri;
+    if (!tri) return;
+    post(ME, rep.t, { ch: c.id });
+    stampSlow(c.id);
+    const late = clamp((performance.now() - tri.t0) / tri.total, 0, 1);
+    S.pings.forEach((p) => { if (p.ch === c.id && !p.answered) { p.answered = true; p.late = late; } });
+    tri.refund = Math.min(6, tri.refund + clamp(rand(rep.r[0], rep.r[1]), -3, 8));
+    if (!owedPings().length) finishTriage();
+    else { tri.list = true; setCtx(buildTriage); }
+  }
+  function finishTriage() {
+    const tri = S.tri;
+    if (!tri) return;
+    S.tri = null;
+    clearActions();
+    const counted = S.pings.filter((p) => !p.forgiven);
+    applyLor(lorPenalty(counted, 1), tri.refund, S.active);
+    returnChatter();
+    toast('Pings settled', S.lor.count ? `left on read x${S.lor.count}` : 'inbox zero');
+    offerExcuse();
+  }
+
+  function offerExcuse() {
+    S.phase = 'excuse';
+    const opts = [QUIET].concat(pickOptions(EXCUSES, 'excuse', deriveExcuse, 3));
+    setCtx((noFocus) => {
+      const c = activeCh();
+      const left = slowLeft(c.id);
+      setActions('YOU\'RE BACK. EXPLAIN YOURSELF.', opts.map((e) => {
+        const used = S.uses[e.k || e.t] || 0;
+        const locked = left > 0 && !e.quiet;
+        return {
+          label: e.t,
+          sub: locked ? `slowmode in ${labelOf(c)}: ${left}s (switch channel or wait)` : e.quiet ? 'say nothing. pure sigma energy. x1.25 pts' : used ? `used ${used}x. they have screenshots.` : 'untested excuse (mom has not heard this one yet)',
+          disabled: locked,
+          fn: () => chooseExcuse(e),
+        };
+      }), null, { noFocus, hint: `posting in ${labelOf(c)}` });
+      if (left) slowTick();
+    });
   }
 
   // ---------- sidebar channels + members ----------
   const chanBoxes = new Map();
   function buildChannels() {
     const tb = $('#textChans');
+    const bar = $('#chanBar');
     const vb = $('#voiceChans');
     tb.textContent = '';
+    bar.textContent = '';
     vb.textContent = '';
     chanBoxes.clear();
-    TEXT.forEach((c, i) => {
-      const d = el('div', 'ch' + (i === 0 ? ' active' : ''), chanLabel(c));
-      if (c.desc) d.title = c.desc;
-      tb.appendChild(d);
+    chanRows.length = 0;
+    TEXT.forEach((c) => {
+      const li = el('li', 'ch-row');
+      const b1 = mkChanBtn(c);
+      const mkMute = () => {
+        const m = el('button', 'ch-mute', '🔔');
+        m.type = 'button';
+        m.tabIndex = -1;
+        m.addEventListener('click', (e) => { e.stopPropagation(); toggleMute(c.id); });
+        return m;
+      };
+      const mute = mkMute();
+      li.append(b1, mute);
+      tb.appendChild(li);
+      const b2 = mkChanBtn(c, true);
+      const mute2 = mkMute(); // phone strip: the sidebar list is hidden there
+      const chip = el('span', 'chip-wrap');
+      chip.append(b2, mute2);
+      bar.appendChild(chip);
+      chanRows.push({ c, btns: [b1, b2], mutes: [mute, mute2] });
     });
     VOICE.concat([AFK_CH]).forEach((c) => {
       const row = el('div', 'ch', chanLabel(c));
@@ -563,7 +1409,8 @@
       vb.append(row, box);
       chanBoxes.set(c.id, { row, box });
     });
-    $('#chatName').textContent = chanLabel(TEXT[0]);
+    $('#chatName').textContent = chanLabel(activeCh());
+    renderChannelList();
   }
 
   // friends follow the player into their current voice channel; if a channel lists members, only those are in it
@@ -727,6 +1574,7 @@
       $('#meStatus').textContent = afkStatusShort();
       document.title = S.unread ? `(${S.unread}) AFK Simulator` : 'AFK Simulator';
     }
+    if (chanDirty) renderChannelList();
     if (S.resident) {
       const tt = resTimerText();
       const ss = resStatus();
@@ -755,6 +1603,12 @@
   function start() {
     initAudio();
     reset();
+    const bk = BULKS[PK.id];
+    if (PK.id !== 'classic' && bk && bk.state === 'loading') {
+      bk.toasted = true;
+      toast('loading dialog…', 'hand-written lines until the rest arrives');
+      ensureBulk(R.packs[PK.id], true);
+    }
     closeModal();
     activateConsumables();
     const a = friend();
@@ -785,24 +1639,36 @@
     }
   }
 
+  // the channel you are looking at when you pick the brb is where it is posted
+  function brbHint(c) {
+    const kind = c.visibility >= 0.65 ? 'busy: everyone notices, pings find you fast, suspicion builds a bit quicker'
+      : c.visibility <= 0.4 ? 'quiet: suspicion builds slower, but friends who miss it ping you all over the place'
+        : 'middling: some notice, some do not';
+    return `${kind}${c.muted ? ' · muted (pings reach you late)' : ''}${c.slowmodeSec ? ` · slowmode ${c.slowmodeSec}s` : ''}. Click another channel to say it there.`;
+  }
   function offerBrb() {
     S.phase = 'chat';
-    const opts = shuffle(BRB).slice(0, 3);
-    setActions('SAY BRB (then actually leave)', opts.map((o) => ({
-      label: o.t,
-      sub: `promise ${fmtMins(o.p)} · x${o.m} pts (short promise = bigger multiplier)`,
-      fn: () => chooseBrb(o),
-    })), { label: `🛒 Shop · ${fmtN(tokens)} 🪙`, fn: openShop });
+    const opts = pickOptions(BRB, 'brb', deriveBrb, 3);
+    setCtx((noFocus) => {
+      const c = activeCh();
+      setActions(`SAY BRB IN ${labelOf(c).toUpperCase()} (then actually leave)`, opts.map((o) => ({
+        label: o.t,
+        sub: `promise ${fmtMins(o.p)} · x${o.m} pts (short promise = bigger multiplier)`,
+        fn: () => chooseBrb(o),
+      })), { label: `🛒 Shop · ${fmtN(tokens)} 🪙`, fn: openShop }, { noFocus, hint: brbHint(c) });
+    });
   }
 
   function chooseBrb(o) {
     S.phase = 'leaving';
-    post(ME, o.t);
+    S.brbCh = S.active;
+    S.brbN[S.brbCh] = (S.brbN[S.brbCh] || 0) + 1;
+    post(ME, o.t, { ch: S.brbCh });
     S.promise = o.p;
     S.mult = o.m;
     later(700, () => {
       const f = friend();
-      post(f, say(f, 'ok'));
+      post(f, speak(f, 'ok'));
       offerPath();
     });
   }
@@ -849,6 +1715,13 @@
     S.dragMin = 0;
     S.aloneSince = null;
     S.flavor = '';
+    S.fightPings = 0;
+    S.lastFight = -99;
+    S.pings = [];
+    S.follows = 0;
+    S.lor = null;
+    S.tri = null;
+    chanDirty = true;
     S.friends.forEach((f) => { f.vc = true; });
     $('.afk-hint').textContent = matchMedia('(pointer:coarse)').matches
       ? 'Touch nothing. Any tap = you\'re back. Go outside. Or don\'t, we both know you won\'t.'
@@ -859,6 +1732,7 @@
     document.body.classList.add('afk');
     $('#afkPanel').hidden = false;
     $('#composerText').textContent = `${ME.name} is typing... (he is not)`;
+    renderChannelList();
     renderMembers();
     render();
   }
@@ -898,17 +1772,36 @@
       S.overReal += dt;
       rate = base * 1.6 * (1 + S.overReal / 12) * (1 + 0.15 * Math.log2(Math.max(1, S.mins / S.promise)));
     }
-    S.sus += rate * sm * M.susMult * dt;
+    // a quiet brb channel is a bit slower to get noticed, a busy one a bit faster (general = baseline)
+    S.sus += rate * sm * M.susMult * (1 + 0.25 * (brbVis() - CT.visMid)) * dt;
+    deliverMuted();
 
     S.pending += basePps(late) * pm * M.pointMult * dt;
+    packChatter(dm);
+    if (S.mins >= 500) unlockAch('30k');
 
     if (!over) {
-      if (Math.random() < 0.05 * dt) { const f = friend(); post(f, say(f, 'chill')); }
+      if (Math.random() < 0.05 * dt) { const cid = weightedCh(); const f = friendIn(cid); post(f, speak(f, 'chill'), { ch: cid }); }
     } else {
-      if (Math.random() < (0.12 + S.sus / 300) * dt) {
+      if (Math.random() < (0.12 + S.sus / 300) * (1 + 0.5 * (brbVis() - CT.visMid)) * dt) {
         const tier = S.sus < 35 ? 'low' : S.sus < 70 ? 'mid' : 'high';
-        const f = friend();
-        post(f, tier === 'low' ? say(f, 'low') : digOrSay(f, tier));
+        // friends spread out: the brb channel is the likeliest, but any channel can get the ping
+        const cid = weightedCh();
+        const f = friendIn(cid);
+        let line = meTok(tier === 'low' ? speak(f, 'low') : digOrSay(f, tier));
+        if (!mentionRe().test(line) && Math.random() < 0.45) line = '@' + ME.name + ' ' + line;
+        post(f, line, { ch: cid, weight: tier === 'low' ? 0.8 : tier === 'mid' ? 1.1 : 1.4 });
+      }
+      // an ignored ping gets a follow-up somewhere else ("did you see my message in #x??")
+      if (S.follows < CT.follows && TEXT.length > 1 && Math.random() < 0.2 * dt) {
+        const p0 = S.pings.find((p) => !p.answered && !p.followed && !p.isFollow && S.mins - p.minsAtSend > 6);
+        if (p0) {
+          p0.followed = true;
+          S.follows++;
+          const cid = weightedCh(p0.ch);
+          const f = friendIn(cid, p0.from);
+          post(f, pick(FOLLOWUPS).replace('{ch}', labelOf(textById(p0.ch))), { ch: cid, weight: 0.9, follow: true });
+        }
       }
       if (!S.voted && S.sus > 65 && Math.random() < 0.04 * dt) {
         S.voted = true;
@@ -931,7 +1824,7 @@
         }
       }
     }
-    if (S.sus >= 100) { kicked('the boys ran out of patience'); return; }
+    if (S.sus >= 100) { kicked(PK.id === 'classic' ? 'the boys ran out of patience' : 'the org ran out of patience'); return; }
     if (S.mode === 'afk-timeout' && S.mins >= S.threshold) { moveToAfk(); return; }
     if (S.mode === 'no-timeout') {
       let k = 0;
@@ -976,6 +1869,11 @@
     sfx.bad();
     post(f, pLine('drag', 'gotcha'));
     sys(`${ME.name} was dragged out after ${fmtMins(S.mins)} (promised ${fmtMins(S.promise)})`);
+    returnChatter();
+    // dragged, not negligent: no triage, half the left-on-read penalty
+    settleMuted();
+    const dragged = S.pings.filter((p) => !p.forgiven);
+    if (dragged.length) applyLor(lorPenalty(dragged, 0.5), 0, S.active);
     S.record = false;
     bank(FORCED, susBefore, 1);
     if (S.record) later(700, () => post(friend(), lineOr('hype', 'new record!!')));
@@ -995,7 +1893,11 @@
     const hi = Array.isArray(ev.sus) ? ev.sus[1] : 5;
     S.sus = Math.min(100, S.sus + rand(lo, hi));
     sys(`🎙️ mic: ${ev.label || id}`);
-    post(vcFriend(), Array.isArray(ev.lines) && ev.lines.length ? pick(ev.lines) : '...');
+    post(vcFriend(), mixLine('micEvent', Array.isArray(ev.lines) && ev.lines.length ? () => pick(ev.lines) : null) || '...');
+    if (S.path && S.path.id === 'hot-mic' && S.mins >= 30 && (id === 'flush' || id === 'chewing')) {
+      S.elevator = true;
+      unlockAch('elevator-of-doom');
+    }
     if (ev.funny && Math.random() < 0.5) {
       const b = Math.round((ev.bonus || 20) * (1 + 0.2 * (S.round - 1)));
       S.pending += b;
@@ -1043,6 +1945,7 @@
     $('#composerText').textContent = composerIdle();
     document.title = 'AFK Simulator';
     S.unread = 0;
+    chanDirty = true;
     S.aloneSince = null;
     S.friends.forEach((f) => { f.vc = true; });
     renderMembers();
@@ -1055,28 +1958,31 @@
     const wasMoved = S.autoMoved;
     S.inAfkCh = false;
     endAfkUI();
+    settleMuted();
+    const owed = owedPings();
+    if (owed.length) S.phase = 'triage';
+    // back at the scene of the crime
+    if (S.brbCh && S.brbCh !== S.active) switchChannel(S.brbCh, { force: true });
+    else { const st = S.ch[S.active]; st.unread = 0; st.mentions = 0; renderChannelList(); }
     sys(`${ME.name} returned after ${fmtMins(S.mins)} (promised ${fmtMins(S.promise)})`);
+    if (!owed.length) returnChatter(); // with pings owed it runs after triage, when we know what was left on read
     if (wasMoved) {
       sys(`⏱ you were moved to AFK at ${fmtMins(S.movedAt)}`, 'good');
       toast('Moved to AFK', `you were moved to AFK at ${fmtMins(S.movedAt)}`);
     }
-    const opts = [QUIET].concat(shuffle(EXCUSES).slice(0, 3));
-    setActions('YOU\'RE BACK. EXPLAIN YOURSELF.', opts.map((e) => {
-      const used = S.uses[e.t] || 0;
-      return {
-        label: e.t,
-        sub: e.quiet ? 'say nothing. pure sigma energy. x1.25 pts' : used ? `used ${used}x. they have screenshots.` : 'untested excuse (mom has not heard this one yet)',
-        fn: () => chooseExcuse(e),
-      };
-    }));
+    if (owed.length) startTriage(); else offerExcuse();
   }
 
   function chooseExcuse(e) {
     S.phase = 'judging';
-    post(ME, e.t);
+    const exCh = S.active;
+    S.brbCh = exCh; // the rest of the round (reaction, bank line) lands where you answered
+    post(ME, e.t, { ch: exCh });
+    if (!e.quiet) stampSlow(exCh);
     const susBefore = S.sus;
-    const uses = S.uses[e.t] || 0;
-    S.uses[e.t] = uses + 1;
+    const key = e.k || e.t;
+    const uses = S.uses[key] || 0;
+    S.uses[key] = uses + 1;
     let roll = rand(e.r[0], e.r[1]) * Math.pow(0.55, uses);
     if (!e.quiet) roll += getMods().excuseBonus;
     const busted = !e.quiet && uses > 0 && Math.random() < 0.45;
@@ -1088,14 +1994,14 @@
     later(800, () => {
       const f = friend();
       let line;
-      if (early) line = say(f, 'early');
-      else if (busted) line = say(f, 'reused');
-      else if (roll >= 22) line = say(f, 'good');
-      else if (roll >= 8) line = say(f, 'meh');
-      else line = say(f, 'bad');
-      post(f, line);
+      if (early) line = speak(f, 'early');
+      else if (busted) line = speak(f, 'reused');
+      else if (roll >= 22) line = speak(f, 'good');
+      else if (roll >= 8) line = speak(f, 'meh');
+      else line = speak(f, 'bad');
+      post(f, line, { ch: exCh });
       bank(e, susBefore, S.sus >= 100 ? 0.5 : 1);
-      if (S.record && S.sus < 100) later(700, () => post(friend(), lineOr('hype', 'new record!!')));
+      if (S.record && S.sus < 100) later(700, () => post(friend(), lineOr('hype', 'new record!!'), { ch: exCh }));
       if (S.sus >= 100) {
         later(900, () => kicked('your excuse made it worse'));
       } else {
@@ -1107,6 +2013,8 @@
   function bank(e, susBefore, factor = 1) {
     const mins = S.mins;
     const parts = [];
+    if (S.lor && S.lor.count) parts.push(`left on read x${S.lor.count} ${S.lor.d >= 0 ? '+' : '-'}${Math.abs(S.lor.d)}% sus`);
+    S.lor = null;
     let base = S.pending * factor;
     if (factor < 1) parts.push('kicked mid-excuse ×0.5');
     parts.push(`AFK points ${fmtN(base)}`);
@@ -1162,7 +2070,7 @@
     toast(`+${fmtN(total)} pts`, parts.join('\n'));
     sys(`💰 +${fmtN(total)} pts banked${S.combo > 1 ? ` (x${S.combo} combo)` : ''}${S.flavor ? ` · ${S.flavor.toUpperCase()}` : ''}`, 'good');
     try {
-      checkAch({ mins, promise: S.promise, susBefore, susAfter: S.sus, combo: S.combo, path: S.path ? S.path.id : '', autoMoved: S.autoMoved, dragged: S.dragged, roommates: Number(store.get('roommates', 0)) || 0 });
+      checkAch({ mins, promise: S.promise, susBefore, susAfter: S.sus, combo: S.combo, path: S.path ? S.path.id : '', autoMoved: S.autoMoved, dragged: S.dragged, roommates: Number(store.get('roommates', 0)) || 0, cons: S.cons, elevator: S.elevator, fightMissed: S.fightMissed, idrisJabs: S.idrisJabs });
     } catch { /* bad stored data */ }
     render();
   }
@@ -1174,8 +2082,10 @@
     S.inAfkCh = false;
     newRound();
     renderMembers();
+    S.pings = [];
+    S.lor = null;
     const af = friend();
-    post(af, say(af, 'ask'));
+    post(af, speak(af, 'ask'), { ch: S.active });
     later(900, offerBrb);
   }
 
@@ -1183,6 +2093,8 @@
     if (S.kicked) return;
     S.kicked = true;
     S.phase = 'over';
+    S.tri = null;
+    chanDirty = true;
     S.sus = 100;
     S.pending = 0;
     S.aloneSince = null;
@@ -1198,7 +2110,7 @@
     renderMembers();
     render();
     const isBest = saveScore();
-    later(900, () => { const kf = friend(); post(kf, kickDig(kf) || say(kf, 'kickAfter')); });
+    later(900, () => { const kf = friend(); post(kf, kickDig(kf) || speak(kf, 'kickAfter')); });
     later(2200, () => showGameOver(reason, isBest));
   }
 
@@ -1214,10 +2126,31 @@
   function saveScore() {
     const prevBest = bestScore();
     let scores = getScores();
-    scores.push({ name: ME.name, s: S.score, r: S.round, l: Math.floor(S.longest), p: S.longestPath || '', m: S.longestMode || '', d: new Date().toISOString().slice(0, 10) });
+    const entry = { k: packId, name: ME.name, s: S.score, r: S.round, l: Math.floor(S.longest), p: S.longestPath || '', m: S.longestMode || '', d: new Date().toISOString().slice(0, 10) };
+    const fav = favCh();
+    if (fav) entry.f = fav;
+    scores.push(entry);
     scores.sort((a, b) => b.s - a.s);
     store.set('scores', scores.slice(0, 10));
     return S.score > prevBest && S.score > 0;
+  }
+  // the channel you said brb in most this run (optional field on saved scores)
+  const CH_ID = /^[a-z0-9_-]{1,32}$/i;
+  function favCh() {
+    let best = '';
+    let n = 0;
+    Object.keys(S.brbN || {}).forEach((id) => { if (S.brbN[id] > n && CH_ID.test(id)) { best = id; n = S.brbN[id]; } });
+    return best;
+  }
+  function unlockAch(id) {
+    const a = ACH[id];
+    if (!a) return;
+    let got = store.get('ach', {});
+    if (!got || typeof got !== 'object') got = {};
+    if (got[id]) return;
+    got[id] = true;
+    store.set('ach', got);
+    toast(`🏆 ${a.name}`, a.desc, 'ach');
   }
   function checkAch(r) {
     let got = store.get('ach', {});
@@ -1273,7 +2206,9 @@
   let modalKind = 'main';
   let modalReturn = null;
   let prevView = null;
+  let modalOpener = null;
   function openModal(nodes, kind = 'main') {
+    if ($('#modal').hidden) { const a = document.activeElement; modalOpener = a && a !== document.body ? a : null; }
     modalKind = kind;
     if (kind === 'main') prevView = null;
     const card = $('#modalCard');
@@ -1284,7 +2219,15 @@
     const btn = card.querySelector('input, .btn');
     if (btn) btn.focus();
   }
-  function closeModal() { $('#modal').hidden = true; $('#app').inert = false; modalKind = 'main'; prevView = null; }
+  function closeModal() {
+    $('#modal').hidden = true;
+    $('#app').inert = false;
+    modalKind = 'main';
+    prevView = null;
+    const o = modalOpener;
+    modalOpener = null;
+    if (o && o.isConnected && !o.disabled && typeof o.focus === 'function') o.focus();
+  }
   // settings/leaderboard may sit on top of start/gameover: closing restores that view
   function closeOverlay() {
     const back = prevView;
@@ -1304,11 +2247,14 @@
     return got && typeof got === 'object' ? Object.keys(got).length : 0;
   }
   function shareText(e) {
-    const x = e || { name: ME.name, s: S.score, r: S.round, l: S.longest, c: S.combo, p: S.longestPath, m: S.longestMode };
+    const x = e || { name: ME.name, s: S.score, r: S.round, l: S.longest, c: S.combo, p: S.longestPath, m: S.longestMode, k: packId, f: favCh() };
+    const pm = x.k && x.k !== 'classic' ? metaOf(x.k) : null;
+    const inSrv = pm ? `in ${escMd(pm.server && pm.server.name ? pm.server.name : pm.name)} · ` : '';
     const via = x.p && typeof x.p === 'string'
       ? ` · via ${escMd(x.p.slice(0, 24).toLowerCase())}${MODES.includes(x.m) ? `, ${x.m} server` : ''}`
       : '';
-    return `**${escMd(x.name)}** got **${fmtN(x.s)}** pts in AFK Simulator 💤\nround ${x.r} · longest AFK ${fmtMins(x.l || 0)}${via}${x.c ? ` · x${x.c} combo` : ''} · ${achCount()}/${Object.keys(ACH).length} achievements${itemCount() ? ` · ${itemCount()} item${itemCount() === 1 ? '' : 's'}` : ''}\n${SITE_URL}`;
+    const fav = typeof x.f === 'string' && CH_ID.test(x.f) ? ` · fav #${escMd(x.f.slice(0, 24))}` : '';
+    return `**${escMd(x.name)}** got **${fmtN(x.s)}** pts in AFK Simulator 💤\n${inSrv}round ${x.r} · longest AFK ${fmtMins(x.l || 0)}${via}${x.c ? ` · x${x.c} combo` : ''}${fav} · ${achCount()}/${Object.keys(ACH).length} achievements${itemCount() ? ` · ${itemCount()} item${itemCount() === 1 ? '' : 's'}` : ''}\n${SITE_URL}`;
   }
   function copyText(text) {
     const done = () => toast('Copied', 'Paste it in Discord.');
@@ -1344,6 +2290,25 @@
   }
 
   // ---------- settings / leaderboard ----------
+  // pack picker: 'The Boys (classic)' vs installed packs. onDone runs after the switch so the caller can redraw.
+  function packPicker(onDone) {
+    const box = el('div', 'pack-picker');
+    PACKLIST.forEach((pk) => {
+      const b = el('button', 'btn alt pack-btn', pk.name);
+      b.dataset.pack = pk.id;
+      b.setAttribute('aria-pressed', String(pk.id === packId));
+      b.addEventListener('click', () => {
+        if (pk.id === packId) return;
+        setPack(pk.id, () => {
+          modalReturn = showStart;
+          prevView = showStart; // the old start/game-over view belongs to the previous run
+          onDone();
+        });
+      });
+      box.appendChild(b);
+    });
+    return box;
+  }
   function showSettings() {
     const input = el('input', 'name-input', null, 'nameInput');
     input.type = 'text';
@@ -1369,7 +2334,12 @@
     });
     const done = el('button', 'btn', 'Done');
     done.addEventListener('click', () => { apply(); closeOverlay(); });
-    openOverlay('settings', [el('h1', '', '⚙️ Settings', 'modalTitle'), lab, input, el('h3', '', 'THEME'), themeBox, done]);
+    const nodes = [el('h1', '', '⚙️ Settings', 'modalTitle'), lab, input, el('h3', '', 'THEME'), themeBox];
+    if (PACKLIST.length > 1) {
+      nodes.push(el('h3', '', 'SERVER PACK'), packPicker(() => { setName(input.value); showSettings(); }), el('p', 'pack-note', 'Switching packs starts a fresh run. Score and achievements carry over.'));
+    }
+    nodes.push(done);
+    openOverlay('settings', nodes);
   }
   function setName(v) {
     const n = sanitizeName(v);
@@ -1389,7 +2359,7 @@
     if (scores.length) {
       nodes.push(shareButtons(() => {
         const b = getScores()[0];
-        return { name: sanitizeName(b.name), s: b.s, r: b.r, l: b.l, c: 0, p: b.p, m: b.m };
+        return { name: sanitizeName(b.name), s: b.s, r: b.r, l: b.l, c: 0, p: b.p, m: b.m, k: b.k };
       }));
       const clr = el('button', 'btn danger', 'Clear leaderboard');
       let armed = false;
@@ -1473,7 +2443,13 @@
     const btn = el('button', 'btn', `Log in as ${ME.name}`, 'startBtn');
     btn.addEventListener('click', start);
     modalReturn = showStart;
-    openModal([el('h1', '', '💤 AFK Simulator', 'modalTitle'), el('p', 'tag', `You are ${ME.name}. Say brb. Don't come back.`), ul, scoresTable(), achList(), overlayLinks(), btn]);
+    const head = [el('h1', '', '💤 AFK Simulator', 'modalTitle'), el('p', 'tag', `You are ${ME.name}. Say brb. Don't come back.`)];
+    if (PACKLIST.length > 1) {
+      head.push(el('h3', '', 'SERVER'), packPicker(showStart));
+      const pkMeta = R.packs && R.packs[packId];
+      if (pkMeta && pkMeta.server.tagline) head.push(el('p', 'pack-note', pkMeta.server.tagline));
+    }
+    openModal(head.concat([ul, scoresTable(), achList(), overlayLinks(), btn]));
   }
 
   function showGameOver(reason, isBest) {
@@ -1508,20 +2484,35 @@
       closeOverlay();
       return;
     }
+    // channel hotkeys (not while AFK, where any key wakes you): Alt+Up/Down = prev/next, plus Shift = prev/next unread
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && S.phase !== 'afk' && canSwitch()) {
+      e.preventDefault();
+      stepChannel(e.key === 'ArrowDown' ? 1 : -1, e.shiftKey);
+      return;
+    }
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (S.phase === 'afk') { comeBack(); return; }
+    swallow = false;
+    if (S.phase === 'afk') { comeBack(); swallow = S.phase !== 'afk'; return; }
     if (!$('#modal').hidden) return;
     if (e.target && e.target.closest && e.target.closest('input,textarea')) return;
     const b = document.querySelector(`.choice[data-key="${e.key}"]`);
     if (b) b.click();
   });
-  document.addEventListener('pointerdown', () => comeBack());
+  document.addEventListener('pointerdown', () => {
+    const was = S.phase === 'afk';
+    swallow = false;
+    comeBack();
+    swallow = was && S.phase !== 'afk';
+  });
   document.addEventListener('mousemove', (e) => {
     if (S.phase !== 'afk') return;
     if (!S.armed || performance.now() - S.afkAt < 1200) return;
     S.moved += Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0);
     if (S.moved > 80) comeBack();
   });
+
+  $('#textChans').addEventListener('keydown', chanNavKey);
+  $('#chanBar').addEventListener('keydown', chanNavKey);
 
   const muteBtn = $('#muteBtn');
   const syncMute = () => { muteBtn.textContent = muted ? '🔕' : '🔔'; };
@@ -1533,7 +2524,7 @@
     syncMute();
   });
   syncMute();
-  const openSettings = (e) => { if (e) e.stopPropagation(); if (S.phase === 'afk' || S.phase === 'leaving' || S.phase === 'judging') return; initAudio(); showSettings(); };
+  const openSettings = (e) => { if (e) e.stopPropagation(); if (S.phase === 'afk' || S.phase === 'leaving' || S.phase === 'judging' || S.phase === 'triage') return; initAudio(); showSettings(); };
   $('#gearBtn').addEventListener('click', openSettings);
   $('#shopBtn').addEventListener('click', (e) => { e.stopPropagation(); openShop(); });
   $('#meName').addEventListener('click', openSettings);
@@ -1555,7 +2546,19 @@
     render();
   }, 100);
 
-  buildChannels();
+  {
+    const want = store.get('pack', 'classic');
+    const meta = typeof want === 'string' ? metaOf(want) : null;
+    applyPack(meta && packReady(meta.id) ? meta.id : 'classic');
+    // a stored pack whose files are not in index.html loads now (after first paint) and swaps in if the player has not started
+    if (meta && !meta.builtin && !packReady(meta.id)) {
+      whenIdle(() => loadPackCore(meta).then(() => {
+        if (userPack || S.phase !== 'intro' || packId !== 'classic') return;
+        applyPack(meta.id); reset(); render();
+        if ($('#modal').hidden || modalKind === 'main') showStart(); // never replace Settings/Leaderboard/Shop
+      }, () => { /* stays on classic */ }));
+    }
+  }
   reset();
   render();
   showStart();
@@ -1575,6 +2578,41 @@
       setChannel(id) { const c = VOICE.find((x) => x.id === id); if (!c) return false; S.chan = c.id; S.chanLock = true; renderMembers(); return true; },
       resident: () => (S.resident ? { id: S.resident.id, days: resDays(), text: resTimerText() } : null),
       residentSay,
+      pack: () => packId,
+      packs: () => PACKLIST.map((x) => x.id),
+      setPack(id) { let done = false; setPack(id, () => { done = true; }); return done; },
+      bulk: () => { const b = BULKS[packId]; return b ? b.state : 'none'; },
+      ach: () => ({ ...store.get('ach', {}) }),
+      achIds: () => Object.keys(ACH),
+      checkAch(r) { checkAch(r); },
+      unlockAch,
+      server: () => ({ ...SERVER }),
+      recentLen: () => recent.length,
+      orgFightPing,
+      jab: (idris) => jabLine(!!idris),
+      returnChatter,
+      speak: (cat) => meTok(speakCat(cat) || ''),
+      sample(cat, n) { const o = []; for (let i = 0; i < n; i++) o.push(meTok(speak(pick(S.friends), cat))); return o; },
+      sampleCat(cat, n) { const o = []; for (let i = 0; i < n; i++) o.push(meTok(speakCat(cat) || '')); return o; },
+      sampleBrb(n) { const o = []; while (o.length < n) o.push(...pickOptions(BRB, 'brb', deriveBrb, 3)); return o; },
+      sampleExcuse(n) { const o = []; while (o.length < n) o.push(...pickOptions(EXCUSES, 'excuse', deriveExcuse, 3)); return o; },
+      sampleRaw(cat, n) { const o = []; for (let i = 0; i < n; i++) o.push(speak(pick(S.friends), cat)); return o; },
+      mic: (id) => { if (!PEVENTS[id]) return false; micEvent(id); return true; },
+      shareText: (e) => shareText(e),
+      // channel helpers
+      chanIds: () => TEXT.map((c) => c.id),
+      switchCh: (id) => switchChannel(id),
+      mute: (id) => toggleMute(id),
+      // friend line in a channel (as the first non-away friend); returns the ping if it created one
+      say(cid, text, o) { post(S.friends[0], text, { ch: cid, ...(o || {}) }); return S.pings[S.pings.length - 1] || null; },
+      pingRaw: (p) => pingRaw(p),
+      lorPreview: (scale) => lorPenalty(S.pings.filter((p) => !p.forgiven), scale || 1),
+      dragOut: () => dragOut(),
+      skipTriage() { if (S.phase === 'triage') finishTriage(); return S.phase; },
+      tuning: () => ({ ...CT }),
+      favCh,
+      deriveBrb, deriveExcuse,
+      key: () => INV_KEY,
       setMode(mode, threshold) { S.mode = mode; if (threshold) S.threshold = threshold; renderChip(); },
       go(id) { const p = PATHS.find((x) => x.id === id); if (!p) return false; clearActions(); choosePath(p); return true; },
       tick(m) {

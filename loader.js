@@ -11,10 +11,12 @@
   var MODES = ['afk-timeout', 'no-timeout'];
   var ROLES = ['friend', 'resident', 'bot'];
   var EFFECTS = { susMult: 'mult', pointMult: 'mult', micEventChance: 'mult', excuseBonus: 'add', graceMins: 'add' };
+  var CONTENT_VERSION = 4;
   var warnings = [];
+  var ctx = ''; // set to '[pack-id] ' while a pack is being validated
 
   function warn(kind, id, field, msg) {
-    var m = '[afk-content] ' + kind + ' "' + id + '"' + (field ? ' field "' + field + '"' : '') + ': ' + msg;
+    var m = '[afk-content] ' + ctx + kind + ' "' + id + '"' + (field ? ' field "' + field + '"' : '') + ': ' + msg;
     warnings.push(m);
     try { console.warn(m); } catch (e) { /* no console */ }
   }
@@ -146,7 +148,46 @@
       });
     }
     if (e.desc != null) { if (isStr(e.desc, 160)) out.desc = e.desc.trim(); else warn(k, id, 'desc', 'must be text under 160 chars; ignored'); }
+    textChannel(e, id, out);
     return out;
+  }
+
+  // chat-channel gameplay fields (text channels only; see CONTENT.md "Channels"). Defaults are filled in by game.js.
+  function textChannel(e, id, out) {
+    var k = 'channel';
+    var fields = ['visibility', 'busyness', 'muted', 'muteDelay', 'slowmodeSec', 'replies'];
+    if (e.type !== 'text') {
+      fields.forEach(function (f) { if (e[f] != null) warn(k, id, f, 'only text channels use this; ignored'); });
+      return;
+    }
+    ['visibility', 'busyness'].forEach(function (f) {
+      if (e[f] == null) return;
+      if (isNum(e[f]) && e[f] >= 0 && e[f] <= 1) out[f] = e[f]; else warn(k, id, f, 'must be a number between 0 and 1; ignored');
+    });
+    if (e.muted != null) { if (typeof e.muted === 'boolean') out.muted = e.muted; else warn(k, id, 'muted', 'must be true or false; ignored'); }
+    if (e.muteDelay != null) {
+      var md = e.muteDelay;
+      if (Array.isArray(md) && md.length === 2 && isNum(md[0]) && isNum(md[1]) && md[0] >= 0 && md[1] >= md[0] && md[1] <= 120) out.muteDelay = [md[0], md[1]];
+      else warn(k, id, 'muteDelay', 'must be [min, max] game minutes, 0 <= min <= max <= 120; ignored');
+    }
+    if (e.slowmodeSec != null) {
+      if (isNum(e.slowmodeSec) && e.slowmodeSec >= 0 && e.slowmodeSec <= 300) out.slowmodeSec = e.slowmodeSec; else warn(k, id, 'slowmodeSec', 'must be a number of seconds, 0-300; ignored');
+    }
+    if (e.replies != null) {
+      if (!Array.isArray(e.replies)) { warn(k, id, 'replies', 'must be an array of {t, r}; ignored'); return; }
+      var reps = [];
+      e.replies.slice(0, 8).forEach(function (r, i) {
+        var t = typeof r === 'string' ? r : (isObj(r) ? r.t : null);
+        if (!isStr(t, 60)) { warn(k, id, 'replies[' + i + ']', 'needs text (t) under 60 chars; skipped'); return; }
+        var rr = [1, 6];
+        if (isObj(r) && r.r != null) {
+          if (Array.isArray(r.r) && r.r.length === 2 && isNum(r.r[0]) && isNum(r.r[1]) && r.r[0] <= r.r[1] && r.r[0] >= -10 && r.r[1] <= 15) rr = [r.r[0], r.r[1]];
+          else warn(k, id, 'replies[' + i + '].r', 'must be [min, max] suspicion removed, -10..15; using [1, 6]');
+        }
+        reps.push({ t: t.trim(), r: rr });
+      });
+      if (reps.length) out.replies = reps; else warn(k, id, 'replies', 'no valid replies left; the default replies are used');
+    }
   }
 
   // ---------- items ----------
@@ -270,6 +311,179 @@
     return out;
   }
 
+  // ---------- packs ----------
+  // A pack = manifest (content/packs/<id>/manifest.js -> window.AFK_PACK_MANIFESTS) + data files that fill
+  // window.AFK_PACKS[id] = { data, dialog, pools, templates, generate, parodyOrgs, bulk }.
+  var PATHISH = /^[a-z0-9_\-][a-z0-9_\-./]{0,78}$/i;
+  var okPath = function (v) { return typeof v === 'string' && PATHISH.test(v) && v.indexOf('..') < 0 && v.charAt(v.length - 1) !== '/'; };
+
+  function fileList(id, field, v) {
+    if (v == null) return [];
+    if (!Array.isArray(v)) { warn('pack', id, field, 'must be an array of .js file names; ignored'); return []; }
+    return v.filter(function (f) {
+      if (okPath(f) && /\.js$/i.test(f)) return true;
+      warn('pack', id, field, 'bad file name "' + String(f).slice(0, 40) + '" (relative .js path, no ".."); dropped');
+      return false;
+    });
+  }
+
+  function manifest(m, i) {
+    if (!isObj(m)) { warn('pack', '#' + i, '', 'manifest is not an object; skipped'); return null; }
+    var id = m.id;
+    if (!isId(id) || id === 'classic') { warn('pack', id == null ? '#' + i : String(id).slice(0, 40), 'id', 'missing, invalid or reserved (use letters, digits, - or _, max 32; "classic" is built in); skipped'); return null; }
+    if (!isStr(m.name, 40)) { warn('pack', id, 'name', 'missing or not text; skipped'); return null; }
+    if (m.requires != null && (!isNum(m.requires) || m.requires > CONTENT_VERSION)) { warn('pack', id, 'requires', 'needs content system ' + m.requires + ' but this game has ' + CONTENT_VERSION + '; skipped'); return null; }
+    var out = { id: id, name: cleanName(m.name).slice(0, 40), server: '', base: 'content/packs/' + id + '/', files: fileList(id, 'files', m.files), lazy: fileList(id, 'lazy', m.lazy) };
+    if (m.server != null) { if (isStr(m.server, 24) && cleanName(m.server)) out.server = cleanName(m.server); else warn('pack', id, 'server', 'must be short text; using the name from data.js'); }
+    if (m.base != null) {
+      if (typeof m.base === 'string' && okPath(m.base.replace(/\/$/, '')) && m.base.charAt(m.base.length - 1) === '/') out.base = m.base; else warn('pack', id, 'base', 'must be a relative folder ending in "/"; using the default');
+    }
+    return out;
+  }
+
+  // pack characters: lines may be one string or an array; residents use timerDays [min,max] + statusLines
+  function packChar(c) {
+    if (!isObj(c)) return c;
+    var o = {};
+    Object.keys(c).forEach(function (k) { o[k] = c[k]; });
+    if (isObj(c.lines)) {
+      o.lines = {};
+      Object.keys(c.lines).forEach(function (k) { o.lines[k] = Array.isArray(c.lines[k]) ? c.lines[k] : [c.lines[k]]; });
+    }
+    if (Array.isArray(c.timerDays) && c.timerDays.length === 2) { o.timerMin = c.timerDays[0]; o.timerMax = c.timerDays[1]; }
+    if (c.statusLines != null && o.status == null) o.status = c.statusLines;
+    return o;
+  }
+
+  function achievement(e, id) {
+    if (!isStr(e.name, 40)) { warn('achievement', id, 'name', 'missing or not text; skipped'); return null; }
+    var out = { id: id, name: e.name.trim(), desc: '', hint: '' };
+    ['desc', 'hint'].forEach(function (f) {
+      if (e[f] == null) return;
+      if (isStr(e[f], 160)) out[f] = e[f].trim(); else warn('achievement', id, f, 'must be text under 160 chars; ignored');
+    });
+    return out;
+  }
+
+  function parodyOrg(e, id) {
+    var k = 'parodyOrg';
+    if (!isStr(e.name, 40)) { warn(k, id, 'name', 'missing or not text; skipped'); return null; }
+    var out = { id: id, name: cleanName(e.name).slice(0, 40), tag: '', lines: [], taunts: [] };
+    if (e.tag != null) { if (isStr(e.tag, 8) && /^[\w-]+$/.test(e.tag)) out.tag = e.tag; else warn(k, id, 'tag', 'must be 1-8 letters/digits; ignored'); }
+    if (e.lines != null) { var l = strList(k, id, 'lines', e.lines, 240); if (l) out.lines = l; }
+    if (e.taunts != null) { var t = strList(k, id, 'taunts', e.taunts, 240); if (t) out.taunts = t; }
+    if (!out.lines.length && !out.taunts.length) { warn(k, id, 'lines', 'no usable lines or taunts; skipped'); return null; }
+    return out;
+  }
+
+  // pools: { slotName: [ 'text' | { v, tags?, w? } ] }; templates: { group: [ ... ] | { mood: { cat: [...] } } }
+  function poolEntry(x) {
+    if (typeof x === 'string') return isStr(x, 80);
+    return isObj(x) && isStr(x.v != null ? x.v : x.t != null ? x.t : x.text, 80);
+  }
+  function tmplEntry(x) {
+    if (typeof x === 'string') return isStr(x, 240);
+    return isObj(x) && isStr(x.t != null ? x.t : x.text, 240);
+  }
+  function slotMap(kind, obj, ok, depth) {
+    var out = {};
+    if (obj == null) return out;
+    if (!isObj(obj)) { warn(kind, '*', '', 'must be an object; ignored'); return out; }
+    Object.keys(obj).forEach(function (key) {
+      if (BAD_KEY.test(key) || !/^[A-Za-z_]\w{0,30}$/.test(key)) { warn(kind, key, '', 'bad name; skipped'); return; }
+      var v = obj[key];
+      if (depth && isObj(v)) { out[key] = slotMap(kind + '.' + key, v, ok, 0); return; }
+      if (!Array.isArray(v)) { warn(kind, key, '', 'must be an array; skipped'); return; }
+      var good = v.filter(ok);
+      if (good.length !== v.length) warn(kind, key, '', (v.length - good.length) + ' bad entr' + (v.length - good.length === 1 ? 'y' : 'ies') + ' dropped');
+      if (good.length) out[key] = good;
+    });
+    return out;
+  }
+
+  function packDialog(dl) {
+    if (dl == null) return { BRB: [], EXCUSES: [], LINES: {} };
+    if (!isObj(dl)) { warn('dialog', '*', '', 'must be an object; ignored'); return { BRB: [], EXCUSES: [], LINES: {} }; }
+    var lines = {};
+    if (isObj(dl.lines)) Object.keys(dl.lines).forEach(function (k) { lines[k] = dl.lines[k]; });
+    if (dl.orgFightPings != null) lines.orgFight = dl.orgFightPings;
+    if (dl.missedFight != null) lines.missedFight = dl.missedFight;
+    if (dl.welcomeBack != null) lines.welcomeBack = dl.welcomeBack;
+    return dialog({ BRB: dl.brb, EXCUSES: dl.excuses, LINES: lines });
+  }
+
+  function resolvePack(m) {
+    // read window.AFK_PACKS live: pack files loaded after this script (lazy core path) may have created it
+    var PACKS = (window.AFK_PACKS && typeof window.AFK_PACKS === 'object') ? window.AFK_PACKS : {};
+    var raw = PACKS[m.id];
+    if (!isObj(raw) || !isObj(raw.data)) return null;
+    var before = warnings.length;
+    ctx = '[' + m.id + '] ';
+    try {
+      var d = raw.data;
+      var sv = isObj(d.server) ? d.server : {};
+      var name = m.server || (isStr(sv.name, 24) ? cleanName(sv.name) : '') || m.name;
+      var out = {
+        id: m.id, name: m.name, base: m.base, files: m.files, lazy: m.lazy, ready: true,
+        server: { name: name, icon: isStr(sv.icon, 8) ? sv.icon.trim() : '', tagline: isStr(sv.tagline, 200) ? sv.tagline.trim() : '' },
+        characters: list('character', (Array.isArray(d.characters) ? d.characters : []).concat(Array.isArray(d.residents) ? d.residents : []).map(packChar), character),
+        channels: list('channel', d.channels, channel),
+        items: list('item', d.items, item),
+        achievements: list('achievement', d.achievements, achievement),
+        dialog: packDialog(raw.dialog),
+        pools: slotMap('pools', raw.pools, poolEntry, 0),
+        templates: slotMap('templates', raw.templates, tmplEntry, 1),
+        parodyOrgs: list('parodyOrg', raw.parodyOrgs, parodyOrg),
+        generate: typeof raw.generate === 'function' ? raw.generate : null,
+        hasBulk: m.lazy.length > 0
+      };
+      var ids = {};
+      out.characters.forEach(function (c) { ids[c.id] = true; });
+      out.channels.forEach(function (ch) {
+        ch.members.forEach(function (mm) { if (!ids[mm]) warn('channel', ch.id, 'members', 'unknown character id "' + mm + '"; it will be ignored'); });
+      });
+      if (!out.characters.some(function (c) { return c.role === 'friend'; })) warn('pack', m.id, 'characters', 'no friends in this pack; the built-in friends will be used');
+      if (!out.channels.some(function (c) { return c.type === 'text'; })) warn('pack', m.id, 'channels', 'no text channel; the classic channels will be used');
+      out.warnings = warnings.length - before;
+      return out;
+    } finally {
+      ctx = '';
+    }
+  }
+
+  // bulk files can hold ~13k lines: check each line cheaply (string, 3-160 chars, no control chars) and report once per category
+  function cleanBulk(id, raw) {
+    var out = {};
+    if (!isObj(raw)) { ctx = '[' + id + '] '; warn('bulk', '*', '', 'must be an object of arrays; ignored'); ctx = ''; return out; }
+    Object.keys(raw).forEach(function (key) {
+      if (BAD_KEY.test(key) || !/^[A-Za-z]{1,24}$/.test(key)) return;
+      var arr = raw[key];
+      if (!Array.isArray(arr)) return;
+      var good = [];
+      for (var i = 0; i < arr.length; i++) {
+        var x = arr[i];
+        if (typeof x === 'string' && x.length >= 2 && x.length <= 160 && !/[\u0000-\u001f]/.test(x)) good.push(x);
+      }
+      if (good.length !== arr.length) { ctx = '[' + id + '] '; warn('bulk', key, '', (arr.length - good.length) + ' bad line(s) dropped'); ctx = ''; }
+      if (good.length) out[key] = good;
+    });
+    return out;
+  }
+
+  var MAN = Array.isArray(window.AFK_PACK_MANIFESTS) ? window.AFK_PACK_MANIFESTS : [];
+  var packList = [{ id: 'classic', name: 'The Boys (classic)', server: { name: 'the boys', icon: 'TB' }, builtin: true }];
+  var packs = {};
+  var seenPack = {};
+  MAN.forEach(function (m0, i) {
+    var m = manifest(m0, i);
+    if (!m) return;
+    if (seenPack[m.id]) { warn('pack', m.id, 'id', 'duplicate pack id; skipped'); return; }
+    seenPack[m.id] = true;
+    var rp = resolvePack(m);
+    packs[m.id] = rp; // null until its files are loaded (the game loads them on select)
+    packList.push({ id: m.id, name: m.name, server: rp ? rp.server : { name: m.server || m.name, icon: '' }, manifest: m, ready: !!rp });
+  });
+
   // ---------- run ----------
   var R = {
     characters: list('character', C.characters, character),
@@ -280,6 +494,17 @@
     pathEvents: pathEvents(C.pathEvents),
     pathLines: lineMap('pathLines', C.pathLines),
     dialog: dialog(C.dialog),
+    packList: packList,
+    packs: packs,
+    resolvePack: function (id) {
+      var e = packList.filter(function (p) { return p.id === id; })[0];
+      if (!e || !e.manifest) return null;
+      var rp = resolvePack(e.manifest);
+      packs[id] = rp;
+      if (rp) { e.ready = true; e.server = rp.server; }
+      return rp;
+    },
+    cleanBulk: cleanBulk,
     warnings: warnings
   };
 
@@ -316,6 +541,7 @@
     brb: R.dialog.BRB.length,
     excuses: R.dialog.EXCUSES.length,
     lineKeys: Object.keys(R.dialog.LINES).length,
+    packs: packList.length - 1,
     warnings: warnings.length
   };
 

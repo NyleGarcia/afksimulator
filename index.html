@@ -13,16 +13,16 @@
 <body>
   <div id="app">
     <nav class="servers" aria-hidden="true">
-      <div class="srv active">TB</div>
+      <div id="serverIcon" class="srv active">TB</div>
       <div class="srv">🎮</div>
       <div class="srv">📚</div>
       <div class="srv add">+</div>
     </nav>
 
     <aside class="channels">
-      <header class="server-name">the boys ▾</header>
+      <header id="serverName" class="server-name">the boys ▾</header>
       <div class="ch-group">TEXT CHANNELS</div>
-      <div id="textChans"></div>
+      <nav aria-label="Text channels"><ul id="textChans" class="chan-list"></ul></nav>
       <div class="ch-group">VOICE CHANNELS</div>
       <div id="voiceChans"></div>
       <div id="invStrip" class="inv-strip" aria-label="Tokens and items"></div>
@@ -57,7 +57,10 @@
         <span id="susPct" class="sus-pct">0%</span>
       </div>
 
-      <div id="messages" class="messages" aria-live="polite"></div>
+      <nav id="chanBarWrap" class="chan-bar-wrap" aria-label="Text channels"><div id="chanBar" class="chan-bar"></div></nav>
+
+      <div id="messages" class="messages" role="log" aria-live="polite" tabindex="0" aria-label="Messages"></div>
+      <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
 
       <section id="afkPanel" class="afk-panel" hidden>
         <div class="afk-top">
@@ -97,6 +100,14 @@
   <script src="content/channels.js"></script>
   <script src="content/items.js"></script>
   <script src="content/themes.js"></script>
+  <!-- content pack: small core files only. Its heavy bulk.js is NOT listed here; game.js adds it after first paint when the pack is active -->
+  <script src="content/packs/bobernet/manifest.js"></script>
+  <script src="content/packs/bobernet/pools.js"></script>
+  <script src="content/packs/bobernet/templates.js"></script>
+  <script src="content/packs/bobernet/generate.js"></script>
+  <script src="content/packs/bobernet/dialog.js"></script>
+  <script src="content/packs/bobernet/data.js"></script>
+  <script src="content/packs/bobernet/parody-orgs.js"></script>
   <script src="loader.js"></script>
   <script src="game.js"></script>
 </body>
